@@ -55,8 +55,9 @@
 
 | 组件 | 版本 | 备注 |
 |---|---|---|
-| Java | 1.8 | JDK 8，不得使用 Java 9+ 特性 |
+| Java | 1.8 | 源码/目标字节码为 Java 8，不得使用 Java 9+ 特性 |
 | Spring Boot | 2.5.6 | 不得升级 |
+| 编译 JDK | 11 | **开发/测试环境使用 OpenJDK 11 编译**，生产部署使用 JDK 8 |
 | MyBatis-Plus | 3.4.0 | 不得升级 |
 | MySQL | 8.0 | 驱动 `com.mysql.cj.jdbc.Driver` |
 | Redis | 6 | 客户端 Spring Data Redis |
@@ -787,7 +788,32 @@ log.warn("预收款余额不足 accountId={} required={} balance={}", accountId,
 微信支付回调的幂等验证
 ```
 
-### 10.2 测试类规范
+### 10.2 编译与测试环境
+
+开发环境使用 **OpenJDK 11** 编译和运行测试（系统已安装），目标字节码仍为 Java 8：
+
+```bash
+# 设置编译环境
+export JAVA_HOME=/usr/lib/jvm/java-11-openjdk-amd64
+export PATH=$JAVA_HOME/bin:$PATH
+
+# 全量安装（跳过测试）
+mvn install -DskipTests
+
+# 运行档案层全部测试
+mvn test -pl zhaoxinwy-pms -Dtest="com.zhaoxinms.resi.**"
+
+# 运行单个测试类
+mvn test -pl zhaoxinwy-pms -Dtest=EntityValidationTest
+
+# 生成 JaCoCo 覆盖率报告（test 阶段自动触发）
+mvn test -pl zhaoxinwy-pms -Dtest="com.zhaoxinms.resi.**"
+# 报告输出：zhaoxinwy-pms/target/site/jacoco/index.html
+```
+
+> 环境 JDK 21 因 `maven-compiler-plugin:3.1` 和 Lombok 1.18.20 不兼容无法编译，已修复代码中 `sun.management.Agent` 无用导入并升级插件至 3.8.1。
+
+### 10.3 测试类规范
 
 ```java
 // 测试类放在对应模块的 src/test/ 目录
@@ -987,4 +1013,4 @@ sql/{版本号}/
 ---
 
 *本文件随项目演进持续更新。如有规范变更，须同步更新本文件并在 PR 中注明。*  
-*最后更新：2026年5月11日*
+*最后更新：2026年5月11日（新增：编译环境使用 OpenJDK 11）*
