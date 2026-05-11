@@ -59,6 +59,21 @@ export function feeTypeLabel(feeType) {
 }
 
 /**
+ * 费用类型 → Element UI tag 类型
+ * @param {string} feeType PERIOD/TEMP/DEPOSIT/PRE
+ * @returns {string}
+ */
+export function feeTypeTagType(feeType) {
+  const map = {
+    'PERIOD': 'primary',
+    'TEMP': 'warning',
+    'DEPOSIT': 'danger',
+    'PRE': 'success'
+  }
+  return map[feeType] || ''
+}
+
+/**
  * 计费方式 → 中文标签
  * @param {string} calcType FIXED/AREA/USAGE/FORMULA
  * @returns {string}
@@ -71,6 +86,21 @@ export function calcTypeLabel(calcType) {
     'FORMULA': '自定义公式'
   }
   return map[calcType] || calcType
+}
+
+/**
+ * 计费方式 → Element UI tag 类型
+ * @param {string} calcType FIXED/AREA/USAGE/FORMULA
+ * @returns {string}
+ */
+export function calcTypeTagType(calcType) {
+  const map = {
+    'FIXED': '',
+    'AREA': 'success',
+    'USAGE': 'warning',
+    'FORMULA': 'danger'
+  }
+  return map[calcType] || ''
 }
 
 /**
