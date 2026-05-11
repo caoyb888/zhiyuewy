@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.zhaoxinms.resi.archive.mapper.ResiBuildingMapper">
+
+    <resultMap type="com.zhaoxinms.resi.archive.entity.ResiBuilding" id="ResiBuildingResult">
+        <id property="id" column="id"/>
+        <result property="projectId" column="project_id"/>
+        <result property="name" column="name"/>
+        <result property="number" column="number"/>
+        <result property="floors" column="floors"/>
+        <result property="enabledMark" column="enabled_mark"/>
+        <result property="createBy" column="create_by"/>
+        <result property="createTime" column="create_time"/>
+        <result property="updateBy" column="update_by"/>
+        <result property="updateTime" column="update_time"/>
+        <result property="projectName" column="project_name"/>
+    </resultMap>
+
+    <sql id="selectResiBuildingVo">
+        SELECT b.id, b.project_id, b.name, b.number, b.floors,
+               b.enabled_mark, b.create_by, b.create_time, b.update_by, b.update_time,
+               p.name as project_name
+        FROM resi_building b
+        LEFT JOIN resi_project p ON b.project_id = p.id AND p.enabled_mark = 1
+    </sql>
+
+    <select id="selectResiBuildingList" resultMap="ResiBuildingResult">
+        <include refid="selectResiBuildingVo"/>
+        WHERE b.enabled_mark = 1
+        <if test="projectId != null">
+            AND b.project_id = #{projectId}
+        </if>
+        <if test="name != null and name != ''">
+            AND b.name LIKE CONCAT('%', #{name}, '%')
+        </if>
+        <if test="number != null and number != ''">
+            AND b.number = #{number}
+        </if>
+        ORDER BY b.create_time DESC
+    </select>
+
+</mapper>
