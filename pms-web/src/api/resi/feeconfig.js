@@ -104,6 +104,14 @@ export function batchAllocate(data) {
   })
 }
 
+export function previewBatchAllocate(params) {
+  return request({
+    url: '/resi/feeconfig/allocation/preview',
+    method: 'get',
+    params
+  })
+}
+
 // ==================== 票据配置 ====================
 
 export function listTicketConfig(query) {
@@ -141,6 +149,13 @@ export function delTicketConfig(id) {
   return request({
     url: '/resi/feeconfig/ticket/' + id,
     method: 'delete'
+  })
+}
+
+export function getTicketDefaultFields() {
+  return request({
+    url: '/resi/feeconfig/ticket/default-fields',
+    method: 'get'
   })
 }
 

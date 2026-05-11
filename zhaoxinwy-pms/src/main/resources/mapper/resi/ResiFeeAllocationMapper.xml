@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.zhaoxinms.resi.feeconfig.mapper.ResiFeeAllocationMapper">
+
+    <resultMap type="com.zhaoxinms.resi.feeconfig.entity.ResiFeeAllocation" id="ResiFeeAllocationResult">
+        <id property="id" column="id"/>
+        <result property="projectId" column="project_id"/>
+        <result property="feeId" column="fee_id"/>
+        <result property="resourceType" column="resource_type"/>
+        <result property="resourceId" column="resource_id"/>
+        <result property="resourceName" column="resource_name"/>
+        <result property="customPrice" column="custom_price"/>
+        <result property="customFormula" column="custom_formula"/>
+        <result property="startDate" column="start_date"/>
+        <result property="endDate" column="end_date"/>
+        <result property="enabledMark" column="enabled_mark"/>
+        <result property="creatorTime" column="creator_time"/>
+        <result property="creatorUserId" column="creator_user_id"/>
+        <result property="lastModifyTime" column="last_modify_time"/>
+        <result property="lastModifyUserId" column="last_modify_user_id"/>
+        <result property="feeName" column="fee_name"/>
+        <result property="feeCode" column="fee_code"/>
+        <result property="projectName" column="project_name"/>
+    </resultMap>
+
+    <sql id="selectResiFeeAllocationVo">
+        SELECT a.*,
+               d.fee_name,
+               d.fee_code,
+               p.name AS project_name
+        FROM resi_fee_allocation a
+        LEFT JOIN resi_fee_definition d ON a.fee_id = d.id AND d.enabled_mark = 1
+        LEFT JOIN resi_project p ON a.project_id = p.id AND p.enabled_mark = 1
+    </sql>
+
+    <select id="selectResiFeeAllocationList" parameterType="com.zhaoxinms.resi.feeconfig.entity.ResiFeeAllocation"
+            resultMap="ResiFeeAllocationResult">
+        <include refid="selectResiFeeAllocationVo"/>
+        <where>
+            a.enabled_mark = 1
+            <if test="projectId != null">
+                AND a.project_id = #{projectId}
+            </if>
+            <if test="feeId != null and feeId != ''">
+                AND a.fee_id = #{feeId}
+            </if>
+            <if test="resourceType != null and resourceType != ''">
+                AND a.resource_type = #{resourceType}
+            </if>
+            <if test="resourceId != null">
+                AND a.resource_id = #{resourceId}
+            </if>
+            <if test="resourceName != null and resourceName != ''">
+                AND a.resource_name LIKE CONCAT('%', #{resourceName}, '%')
+            </if>
+        </where>
+        ORDER BY a.creator_time DESC
+    </select>
+
+    <select id="selectExistResourceIds" resultType="java.lang.Long">
+        SELECT resource_id
+        FROM resi_fee_allocation
+        WHERE fee_id = #{feeId}
+          AND resource_type = #{resourceType}
+          AND start_date = #{startDate}
+          AND enabled_mark = 1
+    </select>
+
+</mapper>
