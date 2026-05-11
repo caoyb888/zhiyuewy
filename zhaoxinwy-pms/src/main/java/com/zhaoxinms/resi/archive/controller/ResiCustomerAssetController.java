@@ -5,6 +5,7 @@ import java.util.List;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -16,8 +17,10 @@ import org.springframework.web.bind.annotation.RestController;
 import com.zhaoxinms.common.annotation.Log;
 import com.zhaoxinms.common.core.controller.BaseController;
 import com.zhaoxinms.common.core.domain.AjaxResult;
+import com.zhaoxinms.common.core.validate.AddGroup;
 import com.zhaoxinms.common.enums.BusinessType;
 import com.zhaoxinms.common.utils.SecurityUtils;
+import com.zhaoxinms.common.utils.StringUtils;
 import com.zhaoxinms.resi.archive.entity.ResiCustomerAsset;
 import com.zhaoxinms.resi.archive.service.IResiCustomerAssetService;
 
@@ -55,7 +58,17 @@ public class ResiCustomerAssetController extends BaseController {
     @PreAuthorize("@ss.hasPermi('resi:customer:add')")
     @Log(title = "住宅收费-客户资产绑定", businessType = BusinessType.INSERT)
     @PostMapping("/bind-asset")
-    public AjaxResult bindAsset(@RequestBody ResiCustomerAsset asset) {
+    public AjaxResult bindAsset(@RequestBody @Validated(AddGroup.class) ResiCustomerAsset asset) {
+        // 校验资产是否已被其他客户当前绑定
+        ResiCustomerAsset existing = assetService.selectCurrentBinding(asset.getAssetType(), asset.getAssetId());
+        if (existing != null && !existing.getCustomerId().equals(asset.getCustomerId())) {
+            return AjaxResult.error("该资产已被其他客户绑定，请先解绑");
+        }
+        // 若同一客户重复绑定同一当前资产，视为更新（先解绑旧记录）
+        if (existing != null && existing.getCustomerId().equals(asset.getCustomerId())) {
+            return AjaxResult.error("该资产已绑定，请勿重复绑定");
+        }
+
         asset.setBindDate(new Date());
         asset.setIsCurrent(1);
         asset.setCreateBy(SecurityUtils.getUsername());
@@ -73,6 +86,9 @@ public class ResiCustomerAssetController extends BaseController {
         ResiCustomerAsset asset = assetService.getById(id);
         if (asset == null) {
             return AjaxResult.error("绑定记录不存在");
+        }
+        if (Integer.valueOf(0).equals(asset.getIsCurrent())) {
+            return AjaxResult.error("该资产已解绑，请勿重复操作");
         }
         asset.setIsCurrent(0);
         asset.setUnbindDate(new Date());

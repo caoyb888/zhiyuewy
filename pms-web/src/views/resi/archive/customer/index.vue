@@ -68,8 +68,9 @@
           <span>{{ parseTime(scope.row.createTime) }}</span>
         </template>
       </el-table-column>
-      <el-table-column label="操作" align="center" class-name="small-padding fixed-width" width="180">
+      <el-table-column label="操作" align="center" class-name="small-padding fixed-width" width="220">
         <template slot-scope="scope">
+          <el-button size="mini" type="text" icon="el-icon-s-cooperation" @click="handleAsset(scope.row)">资产</el-button>
           <el-button size="mini" type="text" icon="el-icon-edit" @click="handleUpdate(scope.row)" v-hasPermi="['resi:customer:edit']">修改</el-button>
           <el-button size="mini" type="text" icon="el-icon-delete" @click="handleDelete(scope.row)" v-hasPermi="['resi:customer:remove']">删除</el-button>
         </template>
@@ -78,6 +79,7 @@
 
     <pagination v-show="total>0" :total="total" :page.sync="queryParams.pageNum" :limit.sync="queryParams.pageSize" @pagination="getList" />
 
+    <!-- 客户新增/修改弹窗 -->
     <el-dialog :title="title" :visible.sync="open" width="500px" append-to-body>
       <el-form ref="form" :model="form" :rules="rules" label-width="100px">
         <el-form-item label="所属项目" prop="projectId">
@@ -114,11 +116,81 @@
         <el-button @click="cancel">取 消</el-button>
       </div>
     </el-dialog>
+
+    <!-- 客户资产绑定弹窗 -->
+    <el-dialog :title="'客户资产绑定 - ' + currentCustomer.customerName" :visible.sync="assetOpen" width="700px" append-to-body>
+      <el-row :gutter="10" class="mb8">
+        <el-col :span="1.5">
+          <el-button type="primary" plain icon="el-icon-plus" size="mini" @click="handleBindAdd" v-hasPermi="['resi:customer:add']">新增绑定</el-button>
+        </el-col>
+      </el-row>
+      <el-table v-loading="assetLoading" :data="assetList" size="small">
+        <el-table-column label="资产名称" align="center" prop="assetName" width="150" />
+        <el-table-column label="资产类型" align="center" width="100">
+          <template slot-scope="scope">
+            <el-tag v-if="scope.row.assetType === 1" type="primary">房间</el-tag>
+            <el-tag v-else-if="scope.row.assetType === 2" type="warning">车位</el-tag>
+            <el-tag v-else type="info">储藏室</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="绑定日期" align="center" prop="bindDate" width="120">
+          <template slot-scope="scope">
+            <span>{{ parseTime(scope.row.bindDate, '{y}-{m}-{d}') }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="解绑日期" align="center" prop="unbindDate" width="120">
+          <template slot-scope="scope">
+            <span>{{ scope.row.unbindDate ? parseTime(scope.row.unbindDate, '{y}-{m}-{d}') : '—' }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="状态" align="center" width="80">
+          <template slot-scope="scope">
+            <el-tag v-if="scope.row.isCurrent === 1" type="success">有效</el-tag>
+            <el-tag v-else type="info">已解绑</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" align="center" width="100">
+          <template slot-scope="scope">
+            <el-button v-if="scope.row.isCurrent === 1" size="mini" type="text" icon="el-icon-circle-close" @click="handleUnbind(scope.row)" v-hasPermi="['resi:customer:edit']">解绑</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+    </el-dialog>
+
+    <!-- 新增资产绑定弹窗 -->
+    <el-dialog title="新增资产绑定" :visible.sync="bindOpen" width="450px" append-to-body>
+      <el-form ref="bindForm" :model="bindForm" :rules="bindRules" label-width="100px">
+        <el-form-item label="所属项目" prop="projectId">
+          <el-select v-model="bindForm.projectId" placeholder="请选择项目" style="width: 100%" @change="handleProjectChange">
+            <el-option v-for="item in projectOptions" :key="item.id" :label="item.name" :value="item.id" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="资产类型" prop="assetType">
+          <el-select v-model="bindForm.assetType" placeholder="请选择资产类型" style="width: 100%" @change="handleAssetTypeChange">
+            <el-option label="房间" :value="1" />
+            <el-option label="车位" :value="2" />
+            <el-option label="储藏室" :value="3" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="选择资产" prop="assetId">
+          <el-select v-model="bindForm.assetId" placeholder="请选择资产" style="width: 100%" filterable :disabled="!bindForm.projectId || !bindForm.assetType">
+            <el-option v-for="item in assetOptions" :key="item.id" :label="item.name || item.roomAlias || item.spaceCode || item.id" :value="item.id" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="绑定日期" prop="bindDate">
+          <el-date-picker v-model="bindForm.bindDate" type="date" placeholder="选择日期" style="width: 100%" value-format="yyyy-MM-dd" />
+        </el-form-item>
+      </el-form>
+      <div slot="footer" class="dialog-footer">
+        <el-button type="primary" @click="submitBind">确 定</el-button>
+        <el-button @click="cancelBind">取 消</el-button>
+      </div>
+    </el-dialog>
   </div>
 </template>
 
 <script>
-import { listCustomer, getCustomer, addCustomer, updateCustomer, delCustomer, listProject } from "@/api/resi/archive";
+import { listCustomer, getCustomer, addCustomer, updateCustomer, delCustomer, listProject, getCustomerAssets, bindCustomerAsset, unbindCustomerAsset, listRoom } from "@/api/resi/archive";
 import { maskPhone, maskIdCard } from "@/utils/resi";
 
 export default {
@@ -149,6 +221,21 @@ export default {
         customerName: [{ required: true, message: "客户姓名不能为空", trigger: "blur" }],
         phone: [{ required: true, message: "手机号不能为空", trigger: "blur" }],
         customerType: [{ required: true, message: "客户类型不能为空", trigger: "change" }]
+      },
+      // 资产绑定相关
+      assetOpen: false,
+      assetLoading: false,
+      assetList: [],
+      currentCustomer: {},
+      // 新增绑定相关
+      bindOpen: false,
+      bindForm: {},
+      assetOptions: [],
+      bindRules: {
+        projectId: [{ required: true, message: "所属项目不能为空", trigger: "change" }],
+        assetType: [{ required: true, message: "资产类型不能为空", trigger: "change" }],
+        assetId: [{ required: true, message: "请选择资产", trigger: "change" }],
+        bindDate: [{ required: true, message: "绑定日期不能为空", trigger: "change" }]
       }
     };
   },
@@ -241,6 +328,78 @@ export default {
       }).then(() => {
         this.getList();
         this.$modal.msgSuccess("删除成功");
+      }).catch(() => {});
+    },
+    // ==================== 资产绑定 ====================
+    handleAsset(row) {
+      this.currentCustomer = row;
+      this.assetOpen = true;
+      this.loadAssets(row.id);
+    },
+    loadAssets(customerId) {
+      this.assetLoading = true;
+      getCustomerAssets(customerId).then(response => {
+        this.assetList = response.data || [];
+        this.assetLoading = false;
+      });
+    },
+    handleBindAdd() {
+      this.bindForm = {
+        customerId: this.currentCustomer.id,
+        projectId: undefined,
+        assetType: 1,
+        assetId: undefined,
+        bindDate: this.parseTime(new Date(), "{y}-{m}-{d}")
+      };
+      this.assetOptions = [];
+      this.bindOpen = true;
+    },
+    handleProjectChange() {
+      this.bindForm.assetId = undefined;
+      this.loadAssetOptions();
+    },
+    handleAssetTypeChange() {
+      this.bindForm.assetId = undefined;
+      this.loadAssetOptions();
+    },
+    loadAssetOptions() {
+      const { projectId, assetType } = this.bindForm;
+      if (!projectId || !assetType) {
+        this.assetOptions = [];
+        return;
+      }
+      if (assetType === 1) {
+        listRoom({ projectId, pageNum: 1, pageSize: 1000 }).then(response => {
+          this.assetOptions = (response.rows || []).map(item => ({
+            id: item.id,
+            name: item.roomAlias || item.roomNo
+          }));
+        });
+      } else {
+        // 车位/储藏室暂无可选接口，预留扩展
+        this.assetOptions = [];
+      }
+    },
+    submitBind() {
+      this.$refs["bindForm"].validate(valid => {
+        if (valid) {
+          bindCustomerAsset(this.bindForm).then(() => {
+            this.$modal.msgSuccess("绑定成功");
+            this.bindOpen = false;
+            this.loadAssets(this.currentCustomer.id);
+          });
+        }
+      });
+    },
+    cancelBind() {
+      this.bindOpen = false;
+    },
+    handleUnbind(row) {
+      this.$modal.confirm('是否确认解绑资产"' + row.assetName + '"？').then(() => {
+        return unbindCustomerAsset(row.id);
+      }).then(() => {
+        this.loadAssets(this.currentCustomer.id);
+        this.$modal.msgSuccess("解绑成功");
       }).catch(() => {});
     }
   }

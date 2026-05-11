@@ -37,4 +37,24 @@
         ORDER BY a.is_current DESC, a.bind_date DESC
     </select>
 
+    <select id="selectCurrentBinding" resultMap="ResiCustomerAssetResult">
+        SELECT
+            a.id, a.customer_id, a.project_id, a.asset_type, a.asset_id,
+            a.bind_date, a.unbind_date, a.is_current, a.create_by, a.create_time,
+            c.customer_name,
+            CASE
+                WHEN a.asset_type = 1 THEN r.room_alias
+                WHEN a.asset_type = 2 THEN ps.space_code
+                ELSE ''
+            END as asset_name
+        FROM resi_customer_asset a
+        LEFT JOIN resi_customer c ON a.customer_id = c.id
+        LEFT JOIN resi_room r ON a.asset_type = 1 AND a.asset_id = r.id
+        LEFT JOIN resi_parking_space ps ON a.asset_type = 2 AND a.asset_id = ps.id
+        WHERE a.asset_type = #{assetType}
+          AND a.asset_id = #{assetId}
+          AND a.is_current = 1
+        LIMIT 1
+    </select>
+
 </mapper>

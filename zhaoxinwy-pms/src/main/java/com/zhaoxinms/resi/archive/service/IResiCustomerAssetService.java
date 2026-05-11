@@ -16,4 +16,9 @@ public interface IResiCustomerAssetService extends IService<ResiCustomerAsset> {
      * 查询客户的资产列表
      */
     List<ResiCustomerAsset> selectAssetsByCustomerId(Long customerId);
+
+    /**
+     * 查询资产的当前绑定记录
+     */
+    ResiCustomerAsset selectCurrentBinding(Integer assetType, Long assetId);
 }

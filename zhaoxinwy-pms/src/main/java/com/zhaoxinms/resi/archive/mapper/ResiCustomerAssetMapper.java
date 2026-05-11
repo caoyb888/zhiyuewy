@@ -18,4 +18,9 @@ public interface ResiCustomerAssetMapper extends BaseMapper<ResiCustomerAsset> {
      * 查询客户的资产列表
      */
     List<ResiCustomerAsset> selectAssetsByCustomerId(@Param("customerId") Long customerId);
+
+    /**
+     * 查询资产的当前绑定记录
+     */
+    ResiCustomerAsset selectCurrentBinding(@Param("assetType") Integer assetType, @Param("assetId") Long assetId);
 }

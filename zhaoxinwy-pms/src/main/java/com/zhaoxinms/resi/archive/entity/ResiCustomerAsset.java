@@ -3,6 +3,7 @@ package com.zhaoxinms.resi.archive.entity;
 import javax.validation.constraints.NotNull;
 
 import com.baomidou.mybatisplus.annotation.IdType;
+import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
 import com.zhaoxinms.common.core.validate.AddGroup;
@@ -50,10 +51,12 @@ public class ResiCustomerAsset extends ResiBaseEntity {
     private Integer isCurrent;
 
     /** 客户姓名（非数据库字段） */
-    private transient String customerName;
+    @TableField(exist = false)
+    private String customerName;
 
     /** 资产名称（非数据库字段） */
-    private transient String assetName;
+    @TableField(exist = false)
+    private String assetName;
 
     public Long getId() {
         return id;

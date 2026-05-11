@@ -22,4 +22,9 @@ public class ResiCustomerAssetServiceImpl extends ServiceImpl<ResiCustomerAssetM
     public List<ResiCustomerAsset> selectAssetsByCustomerId(Long customerId) {
         return baseMapper.selectAssetsByCustomerId(customerId);
     }
+
+    @Override
+    public ResiCustomerAsset selectCurrentBinding(Integer assetType, Long assetId) {
+        return baseMapper.selectCurrentBinding(assetType, assetId);
+    }
 }
