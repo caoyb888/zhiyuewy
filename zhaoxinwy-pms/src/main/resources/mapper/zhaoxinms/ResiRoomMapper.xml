@@ -1,0 +1,93 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.zhaoxinms.resi.archive.mapper.ResiRoomMapper">
+
+    <resultMap type="com.zhaoxinms.resi.archive.entity.ResiRoom" id="ResiRoomResult">
+        <id property="id" column="id"/>
+        <result property="projectId" column="project_id"/>
+        <result property="buildingId" column="building_id"/>
+        <result property="unitNo" column="unit_no"/>
+        <result property="floorNo" column="floor_no"/>
+        <result property="roomNo" column="room_no"/>
+        <result property="roomAlias" column="room_alias"/>
+        <result property="buildingArea" column="building_area"/>
+        <result property="innerArea" column="inner_area"/>
+        <result property="roomType" column="room_type"/>
+        <result property="garageNo" column="garage_no"/>
+        <result property="storageNo" column="storage_no"/>
+        <result property="state" column="state"/>
+        <result property="remark" column="remark"/>
+        <result property="enabledMark" column="enabled_mark"/>
+        <result property="createBy" column="create_by"/>
+        <result property="createTime" column="create_time"/>
+        <result property="updateBy" column="update_by"/>
+        <result property="updateTime" column="update_time"/>
+        <result property="projectName" column="project_name"/>
+        <result property="buildingName" column="building_name"/>
+    </resultMap>
+
+    <sql id="selectResiRoomVo">
+        SELECT r.id, r.project_id, r.building_id, r.unit_no, r.floor_no, r.room_no,
+               r.room_alias, r.building_area, r.inner_area, r.room_type,
+               r.garage_no, r.storage_no, r.state, r.remark,
+               r.enabled_mark, r.create_by, r.create_time, r.update_by, r.update_time,
+               p.name as project_name, b.name as building_name
+        FROM resi_room r
+        LEFT JOIN resi_project p ON r.project_id = p.id AND p.enabled_mark = 1
+        LEFT JOIN resi_building b ON r.building_id = b.id AND b.enabled_mark = 1
+    </sql>
+
+    <select id="selectResiRoomList" resultMap="ResiRoomResult">
+        <include refid="selectResiRoomVo"/>
+        WHERE r.enabled_mark = 1
+        <if test="projectId != null">
+            AND r.project_id = #{projectId}
+        </if>
+        <if test="projectIds != null and projectIds.size() > 0">
+            AND r.project_id IN
+            <foreach collection="projectIds" item="pid" open="(" separator="," close=")">
+                #{pid}
+            </foreach>
+        </if>
+        <if test="buildingId != null">
+            AND r.building_id = #{buildingId}
+        </if>
+        <if test="unitNo != null and unitNo != ''">
+            AND r.unit_no = #{unitNo}
+        </if>
+        <if test="roomNo != null and roomNo != ''">
+            AND r.room_no LIKE CONCAT('%', #{roomNo}, '%')
+        </if>
+        <if test="roomAlias != null and roomAlias != ''">
+            AND r.room_alias LIKE CONCAT('%', #{roomAlias}, '%')
+        </if>
+        <if test="state != null and state != ''">
+            AND r.state = #{state}
+        </if>
+        ORDER BY r.create_time DESC
+    </select>
+
+    <select id="searchRoom" resultMap="ResiRoomResult">
+        <include refid="selectResiRoomVo"/>
+        WHERE r.enabled_mark = 1
+        <if test="projectId != null">
+            AND r.project_id = #{projectId}
+        </if>
+        <if test="projectIds != null and projectIds.size() > 0">
+            AND r.project_id IN
+            <foreach collection="projectIds" item="pid" open="(" separator="," close=")">
+                #{pid}
+            </foreach>
+        </if>
+        <if test="keyword != null and keyword != ''">
+            AND (
+                r.room_alias LIKE CONCAT('%', #{keyword}, '%')
+                OR r.room_no LIKE CONCAT('%', #{keyword}, '%')
+            )
+        </if>
+        ORDER BY r.room_alias
+    </select>
+
+</mapper>

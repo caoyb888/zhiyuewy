@@ -31,6 +31,10 @@ public class ResiProjectServiceImpl extends ServiceImpl<ResiProjectMapper, ResiP
         if (StringUtils.isNotBlank(project.getCode())) {
             queryWrapper.eq("code", project.getCode());
         }
+        // 项目权限隔离（由 AOP 注入 projectIds）
+        if (project.getProjectIds() != null && !project.getProjectIds().isEmpty()) {
+            queryWrapper.in("id", project.getProjectIds());
+        }
         // 只查有效数据（软删除已自动过滤，但显式声明更安全）
         queryWrapper.eq("enabled_mark", 1);
         // 按创建时间倒序

@@ -1,5 +1,8 @@
 package com.zhaoxinms.resi.common;
 
+import java.util.List;
+
+import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableLogic;
 import com.zhaoxinms.common.core.mybatisplus.BaseEntity;
 
@@ -26,11 +29,25 @@ public class ResiBaseEntity extends BaseEntity {
     @TableLogic(value = "1", delval = "0")
     private Integer enabledMark;
 
+    /**
+     * 项目权限过滤列表（非数据库字段，由 AOP 注入）
+     */
+    @TableField(exist = false)
+    private List<Long> projectIds;
+
     public Integer getEnabledMark() {
         return enabledMark;
     }
 
     public void setEnabledMark(Integer enabledMark) {
         this.enabledMark = enabledMark;
+    }
+
+    public List<Long> getProjectIds() {
+        return projectIds;
+    }
+
+    public void setProjectIds(List<Long> projectIds) {
+        this.projectIds = projectIds;
     }
 }

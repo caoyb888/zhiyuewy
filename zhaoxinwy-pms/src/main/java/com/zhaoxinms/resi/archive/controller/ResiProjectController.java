@@ -24,6 +24,7 @@ import com.zhaoxinms.common.enums.BusinessType;
 import com.zhaoxinms.common.utils.SecurityUtils;
 import com.zhaoxinms.resi.archive.entity.ResiProject;
 import com.zhaoxinms.resi.archive.service.IResiProjectService;
+import com.zhaoxinms.resi.common.annotation.ResiProjectScope;
 
 import io.swagger.annotations.Api;
 import io.swagger.annotations.ApiOperation;
@@ -46,6 +47,7 @@ public class ResiProjectController extends BaseController {
      */
     @ApiOperation("查询项目列表")
     @PreAuthorize("@ss.hasPermi('resi:project:list')")
+    @ResiProjectScope
     @GetMapping
     public TableDataInfo list(ResiProject project) {
         startPage();
@@ -84,11 +86,9 @@ public class ResiProjectController extends BaseController {
     @ApiOperation("修改项目")
     @PreAuthorize("@ss.hasPermi('resi:project:edit')")
     @Log(title = "住宅收费-项目管理", businessType = BusinessType.UPDATE)
-    @PutMapping
-    public AjaxResult edit(@RequestBody @Validated(EditGroup.class) ResiProject project) {
-        if (project.getId() == null) {
-            return AjaxResult.error("项目ID不能为空");
-        }
+    @PutMapping("/{id}")
+    public AjaxResult edit(@PathVariable("id") Long id, @RequestBody @Validated(EditGroup.class) ResiProject project) {
+        project.setId(id);
         if (!projectService.checkCodeUnique(project.getCode(), project.getId())) {
             return AjaxResult.error("修改项目失败，项目编号 '" + project.getCode() + "' 已存在");
         }

@@ -26,6 +26,7 @@ import com.zhaoxinms.common.enums.BusinessType;
 import com.zhaoxinms.common.utils.SecurityUtils;
 import com.zhaoxinms.resi.archive.entity.ResiBuilding;
 import com.zhaoxinms.resi.archive.service.IResiBuildingService;
+import com.zhaoxinms.resi.common.annotation.ResiProjectScope;
 
 import io.swagger.annotations.Api;
 import io.swagger.annotations.ApiOperation;
@@ -48,6 +49,7 @@ public class ResiBuildingController extends BaseController {
      */
     @ApiOperation("查询楼栋列表")
     @PreAuthorize("@ss.hasPermi('resi:building:list')")
+    @ResiProjectScope
     @GetMapping
     public TableDataInfo list(ResiBuilding building) {
         startPage();
@@ -94,11 +96,9 @@ public class ResiBuildingController extends BaseController {
     @ApiOperation("修改楼栋")
     @PreAuthorize("@ss.hasPermi('resi:building:edit')")
     @Log(title = "住宅收费-楼栋管理", businessType = BusinessType.UPDATE)
-    @PutMapping
-    public AjaxResult edit(@RequestBody @Validated(EditGroup.class) ResiBuilding building) {
-        if (building.getId() == null) {
-            return AjaxResult.error("楼栋ID不能为空");
-        }
+    @PutMapping("/{id}")
+    public AjaxResult edit(@PathVariable("id") Long id, @RequestBody @Validated(EditGroup.class) ResiBuilding building) {
+        building.setId(id);
         building.setUpdateBy(SecurityUtils.getUsername());
         return toAjax(buildingService.updateById(building));
     }

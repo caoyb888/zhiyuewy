@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.zhaoxinms.resi.archive.mapper.ResiCustomerAssetMapper">
+
+    <resultMap type="com.zhaoxinms.resi.archive.entity.ResiCustomerAsset" id="ResiCustomerAssetResult">
+        <id property="id" column="id"/>
+        <result property="customerId" column="customer_id"/>
+        <result property="projectId" column="project_id"/>
+        <result property="assetType" column="asset_type"/>
+        <result property="assetId" column="asset_id"/>
+        <result property="bindDate" column="bind_date"/>
+        <result property="unbindDate" column="unbind_date"/>
+        <result property="isCurrent" column="is_current"/>
+        <result property="createBy" column="create_by"/>
+        <result property="createTime" column="create_time"/>
+        <result property="customerName" column="customer_name"/>
+        <result property="assetName" column="asset_name"/>
+    </resultMap>
+
+    <select id="selectAssetsByCustomerId" resultMap="ResiCustomerAssetResult">
+        SELECT
+            a.id, a.customer_id, a.project_id, a.asset_type, a.asset_id,
+            a.bind_date, a.unbind_date, a.is_current, a.create_by, a.create_time,
+            c.customer_name,
+            CASE
+                WHEN a.asset_type = 1 THEN r.room_alias
+                WHEN a.asset_type = 2 THEN ps.space_code
+                ELSE ''
+            END as asset_name
+        FROM resi_customer_asset a
+        LEFT JOIN resi_customer c ON a.customer_id = c.id
+        LEFT JOIN resi_room r ON a.asset_type = 1 AND a.asset_id = r.id
+        LEFT JOIN resi_parking_space ps ON a.asset_type = 2 AND a.asset_id = ps.id
+        WHERE a.customer_id = #{customerId}
+        ORDER BY a.is_current DESC, a.bind_date DESC
+    </select>
+
+</mapper>

@@ -66,15 +66,30 @@ public class ResiProjectScopeAspect {
                 qw.in(projectColumn, allowedProjectIds);
                 applied = true;
                 if (log.isDebugEnabled()) {
-                    log.debug("项目数据隔离已应用: userId={}, projectColumn={}, projectIds={}",
+                    log.debug("项目数据隔离已应用(QueryWrapper): userId={}, projectColumn={}, projectIds={}",
                             userId, projectColumn, allowedProjectIds);
                 }
                 break;
             }
         }
 
+        // 若未找到 QueryWrapper，尝试向实体参数注入 projectIds（供 XML 动态 SQL 使用）
         if (!applied) {
-            log.warn("方法 [{}] 标记了 @ResiProjectScope 但未找到 QueryWrapper 参数，隔离条件未应用",
+            for (Object arg : args) {
+                if (arg instanceof com.zhaoxinms.resi.common.ResiBaseEntity) {
+                    ((com.zhaoxinms.resi.common.ResiBaseEntity) arg).setProjectIds(allowedProjectIds);
+                    applied = true;
+                    if (log.isDebugEnabled()) {
+                        log.debug("项目数据隔离已应用(实体注入): userId={}, projectIds={}",
+                                userId, allowedProjectIds);
+                    }
+                    break;
+                }
+            }
+        }
+
+        if (!applied) {
+            log.warn("方法 [{}] 标记了 @ResiProjectScope 但未找到 QueryWrapper 或 ResiBaseEntity 参数，隔离条件未应用",
                     point.getSignature().getName());
         }
     }
