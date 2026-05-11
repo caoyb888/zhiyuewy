@@ -1,7 +1,7 @@
 package com.zhaoxinms.resi.common;
 
 import com.baomidou.mybatisplus.annotation.TableLogic;
-import com.zhaoxinms.common.core.domain.BaseEntity;
+import com.zhaoxinms.common.core.mybatisplus.BaseEntity;
 
 /**
  * 住宅物业档案类实体基类
@@ -11,6 +11,8 @@ import com.zhaoxinms.common.core.domain.BaseEntity;
  * <p>
  * 主键策略：BIGINT AUTO_INCREMENT
  * 软删除：enabled_mark = 0
+ * <p>
+ * 继承 mybatisplus.BaseEntity 以获得 create_by/create_time/update_by/update_time 的自动填充能力
  *
  * @author zhaoxinms
  */
