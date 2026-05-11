@@ -1,0 +1,413 @@
+# ============================================================
+# 肇新智慧物业 · 住宅物业收费模块 CI/CD 流水线
+# 版本：v1.0
+# 日期：2026-05-10
+# 负责人：BE-B
+# 说明：
+#   1. 支持增量编译（根据变更文件路径自动判断构建范围）
+#   2. 支持 zhaoxinwy-pms 模块独立构建触发
+#   3. 支持 zhaoxinwy-wxmp 新模块构建流程
+#   4. 自动部署到测试环境（develop 分支 push 时触发）
+#   5. 集成 CLAUDE.md 代码规范检查
+# ============================================================
+
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches:
+      - develop
+      - main
+      - 'release/*'
+      - 'feature/resi-*'
+    paths-ignore:
+      - 'docs/**'
+      - 'README.md'
+      - 'LICENSE'
+      - '.gitignore'
+  pull_request:
+    branches:
+      - develop
+      - main
+    paths-ignore:
+      - 'docs/**'
+      - 'README.md'
+      - 'LICENSE'
+      - '.gitignore'
+
+env:
+  REGISTRY: ghcr.io
+  BACKEND_IMAGE: ghcr.io/${{ github.repository }}/backend
+  WXMP_IMAGE: ghcr.io/${{ github.repository }}/wxmp
+  FRONTEND_IMAGE: ghcr.io/${{ github.repository }}/frontend
+  JAVA_VERSION: 8
+  MAVEN_OPTS: -Xmx2g -XX:+UseG1GC
+
+jobs:
+  # ------------------------------------------------------------
+  # Job 1: 变更检测（增量编译基础）
+  # ------------------------------------------------------------
+  detect-changes:
+    name: Detect Changes
+    runs-on: ubuntu-latest
+    outputs:
+      backend_changed: ${{ steps.filter.outputs.backend }}
+      wxmp_changed: ${{ steps.filter.outputs.wxmp }}
+      frontend_changed: ${{ steps.filter.outputs.frontend }}
+      sql_changed: ${{ steps.filter.outputs.sql }}
+      docker_changed: ${{ steps.filter.outputs.docker }}
+      pom_changed: ${{ steps.filter.outputs.pom }}
+      resi_changed: ${{ steps.filter.outputs.resi }}
+      should_build_backend: ${{ steps.decision.outputs.should_build_backend }}
+      should_build_wxmp: ${{ steps.decision.outputs.should_build_wxmp }}
+      should_build_frontend: ${{ steps.decision.outputs.should_build_frontend }}
+      should_deploy: ${{ steps.decision.outputs.should_deploy }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Paths Filter
+        uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          base: ${{ github.base_ref || 'develop' }}
+          filters: |
+            backend:
+              - 'zhaoxinwy-admin/**'
+              - 'zhaoxinwy-framework/**'
+              - 'zhaoxinwy-system/**'
+              - 'zhaoxinwy-common/**'
+              - 'zhaoxinwy-quartz/**'
+              - 'zhaoxinwy-generator/**'
+              - 'zhaoxinwy-workflow/**'
+              - 'zhaoxinwy-tenant/**'
+            wxmp:
+              - 'zhaoxinwy-wxmp/**'
+            frontend:
+              - 'pms-web/**'
+            sql:
+              - 'sql/**'
+            docker:
+              - 'docker/**'
+            pom:
+              - 'pom.xml'
+              - '**/pom.xml'
+            resi:
+              - 'zhaoxinwy-pms/**'
+              - 'pms-web/src/views/resi/**'
+              - 'pms-web/src/api/resi/**'
+
+      - name: Build Decision
+        id: decision
+        run: |
+          # 默认不构建
+          BUILD_BACKEND="false"
+          BUILD_WXMP="false"
+          BUILD_FRONTEND="false"
+          SHOULD_DEPLOY="false"
+
+          # 判断是否需要构建 backend
+          if [[ "${{ steps.filter.outputs.backend }}" == "true" ]] || \
+             [[ "${{ steps.filter.outputs.resi }}" == "true" ]] || \
+             [[ "${{ steps.filter.outputs.sql }}" == "true" ]] || \
+             [[ "${{ steps.filter.outputs.docker }}" == "true" ]] || \
+             [[ "${{ steps.filter.outputs.pom }}" == "true" ]]; then
+            BUILD_BACKEND="true"
+          fi
+
+          # 判断是否需要构建 wxmp
+          if [[ "${{ steps.filter.outputs.wxmp }}" == "true" ]] || \
+             [[ "${{ steps.filter.outputs.resi }}" == "true" ]] || \
+             [[ "${{ steps.filter.outputs.sql }}" == "true" ]] || \
+             [[ "${{ steps.filter.outputs.docker }}" == "true" ]] || \
+             [[ "${{ steps.filter.outputs.pom }}" == "true" ]]; then
+            BUILD_WXMP="true"
+          fi
+
+          # 判断是否需要构建 frontend
+          if [[ "${{ steps.filter.outputs.frontend }}" == "true" ]] || \
+             [[ "${{ steps.filter.outputs.docker }}" == "true" ]] || \
+             [[ "${{ steps.filter.outputs.pom }}" == "true" ]]; then
+            BUILD_FRONTEND="true"
+          fi
+
+          # PR 不触发自动部署；只有 develop/main/release 分支 push 才部署
+          if [[ "${{ github.event_name }}" == "push" ]] && \
+             ([[ "${{ github.ref }}" == refs/heads/develop ]] || \
+              [[ "${{ github.ref }}" == refs/heads/main ]] || \
+              [[ "${{ github.ref }}" == refs/heads/release/* ]]); then
+            SHOULD_DEPLOY="true"
+          fi
+
+          # feature/resi-* 分支的 push 也允许部署到测试环境（便于联调）
+          if [[ "${{ github.event_name }}" == "push" ]] && \
+             [[ "${{ github.ref }}" == refs/heads/feature/resi-* ]]; then
+            SHOULD_DEPLOY="true"
+          fi
+
+          echo "should_build_backend=$BUILD_BACKEND" >> $GITHUB_OUTPUT
+          echo "should_build_wxmp=$BUILD_WXMP" >> $GITHUB_OUTPUT
+          echo "should_build_frontend=$BUILD_FRONTEND" >> $GITHUB_OUTPUT
+          echo "should_deploy=$SHOULD_DEPLOY" >> $GITHUB_OUTPUT
+
+          echo "=== Build Decision ==="
+          echo "backend_changed: ${{ steps.filter.outputs.backend }}"
+          echo "wxmp_changed: ${{ steps.filter.outputs.wxmp }}"
+          echo "frontend_changed: ${{ steps.filter.outputs.frontend }}"
+          echo "resi_changed: ${{ steps.filter.outputs.resi }}"
+          echo "sql_changed: ${{ steps.filter.outputs.sql }}"
+          echo "docker_changed: ${{ steps.filter.outputs.docker }}"
+          echo "pom_changed: ${{ steps.filter.outputs.pom }}"
+          echo "should_build_backend: $BUILD_BACKEND"
+          echo "should_build_wxmp: $BUILD_WXMP"
+          echo "should_build_frontend: $BUILD_FRONTEND"
+          echo "should_deploy: $SHOULD_DEPLOY"
+
+  # ------------------------------------------------------------
+  # Job 2: 代码规范检查（CLAUDE.md 规范检查项）
+  # ------------------------------------------------------------
+  code-check:
+    name: Code Quality Check
+    runs-on: ubuntu-latest
+    needs: detect-changes
+    if: github.event_name == 'pull_request' || needs.detect-changes.outputs.resi_changed == 'true'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run CLAUDE.md Code Check
+        run: |
+          chmod +x scripts/code-check.sh
+          scripts/code-check.sh origin/${{ github.base_ref || 'develop' }}
+        env:
+          BASE_REF: ${{ github.base_ref || 'develop' }}
+
+  # ------------------------------------------------------------
+  # Job 3: 构建 Backend（zhaoxinwy-admin + 住宅收费模块）
+  # ------------------------------------------------------------
+  build-backend:
+    name: Build Backend
+    runs-on: ubuntu-latest
+    needs: [detect-changes, code-check]
+    if: needs.detect-changes.outputs.should_build_backend == 'true'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK ${{ env.JAVA_VERSION }}
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: 'temurin'
+          cache: 'maven'
+
+      - name: Maven Build (Backend)
+        run: |
+          mvn clean package -B -DskipTests \
+            -pl zhaoxinwy-admin \
+            -am \
+            -Dmaven.javadoc.skip=true \
+            -Dmaven.test.skip=true
+        env:
+          MAVEN_OPTS: ${{ env.MAVEN_OPTS }}
+
+      - name: Verify Backend JAR
+        run: |
+          ls -lh zhaoxinwy-admin/target/*.jar
+          java -jar zhaoxinwy-admin/target/zhaoxinwy-admin.jar --version || true
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and Push Backend Image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: docker/backend/Dockerfile
+          push: ${{ github.event_name == 'push' }}
+          tags: |
+            ${{ env.BACKEND_IMAGE }}:${{ github.sha }}
+            ${{ env.BACKEND_IMAGE }}:latest
+          cache-from: type=gha,scope=backend
+          cache-to: type=gha,mode=max,scope=backend
+          build-args: |
+            MAVEN_IMAGE=maven:3.8-openjdk-8-slim
+            RUNTIME_IMAGE=eclipse-temurin:8-jre
+
+  # ------------------------------------------------------------
+  # Job 4: 构建 Wxmp（zhaoxinwy-wxmp 新模块）
+  # ------------------------------------------------------------
+  build-wxmp:
+    name: Build Wxmp
+    runs-on: ubuntu-latest
+    needs: [detect-changes, code-check]
+    if: needs.detect-changes.outputs.should_build_wxmp == 'true'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK ${{ env.JAVA_VERSION }}
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: 'temurin'
+          cache: 'maven'
+
+      - name: Maven Build (Wxmp)
+        run: |
+          mvn clean package -B -DskipTests \
+            -pl zhaoxinwy-wxmp \
+            -am \
+            -Dmaven.javadoc.skip=true \
+            -Dmaven.test.skip=true
+        env:
+          MAVEN_OPTS: ${{ env.MAVEN_OPTS }}
+
+      - name: Verify Wxmp JAR
+        run: |
+          ls -lh zhaoxinwy-wxmp/target/*.jar
+          java -jar zhaoxinwy-wxmp/target/zhaoxinwy-wxmp.jar --version || true
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and Push Wxmp Image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: docker/wxmp/Dockerfile
+          push: ${{ github.event_name == 'push' }}
+          tags: |
+            ${{ env.WXMP_IMAGE }}:${{ github.sha }}
+            ${{ env.WXMP_IMAGE }}:latest
+          cache-from: type=gha,scope=wxmp
+          cache-to: type=gha,mode=max,scope=wxmp
+          build-args: |
+            MAVEN_IMAGE=maven:3.8-openjdk-8-slim
+            RUNTIME_IMAGE=eclipse-temurin:8-jre
+
+  # ------------------------------------------------------------
+  # Job 5: 构建 Frontend（pms-web Vue 前端）
+  # ------------------------------------------------------------
+  build-frontend:
+    name: Build Frontend
+    runs-on: ubuntu-latest
+    needs: detect-changes
+    if: needs.detect-changes.outputs.should_build_frontend == 'true'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '16'
+          cache: 'npm'
+          cache-dependency-path: pms-web/package-lock.json
+
+      - name: Install Dependencies
+        working-directory: pms-web
+        run: npm ci --legacy-peer-deps
+
+      - name: Build Production
+        working-directory: pms-web
+        run: npm run build:prod
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and Push Frontend Image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: docker/frontend/Dockerfile
+          push: ${{ github.event_name == 'push' }}
+          tags: |
+            ${{ env.FRONTEND_IMAGE }}:${{ github.sha }}
+            ${{ env.FRONTEND_IMAGE }}:latest
+          cache-from: type=gha,scope=frontend
+          cache-to: type=gha,mode=max,scope=frontend
+          build-args: |
+            NODE_IMAGE=node:16-alpine
+            NGINX_IMAGE=nginx:alpine
+
+  # ------------------------------------------------------------
+  # Job 6: 自动部署到测试环境
+  # ------------------------------------------------------------
+  deploy-test:
+    name: Deploy to Test Environment
+    runs-on: ubuntu-latest
+    needs: [detect-changes, build-backend, build-wxmp, build-frontend]
+    if: always() && needs.detect-changes.outputs.should_deploy == 'true' && (needs.build-backend.result == 'success' || needs.build-backend.result == 'skipped') && (needs.build-wxmp.result == 'success' || needs.build-wxmp.result == 'skipped') && (needs.build-frontend.result == 'success' || needs.build-frontend.result == 'skipped')
+    environment:
+      name: test
+      url: http://test-server:8080
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.TEST_SERVER_HOST }}
+          username: ${{ secrets.TEST_SERVER_USER }}
+          key: ${{ secrets.TEST_SERVER_SSH_KEY }}
+          port: ${{ secrets.TEST_SERVER_PORT || '22' }}
+          script: |
+            set -e
+            export BACKEND_TAG="${{ github.sha }}"
+            export WXMP_TAG="${{ github.sha }}"
+            export FRONTEND_TAG="${{ github.sha }}"
+            export REGISTRY="${{ env.REGISTRY }}"
+            export REPO="${{ github.repository }}"
+            export BUILD_BACKEND="${{ needs.detect-changes.outputs.should_build_backend }}"
+            export BUILD_WXMP="${{ needs.detect-changes.outputs.should_build_wxmp }}"
+            export BUILD_FRONTEND="${{ needs.detect-changes.outputs.should_build_frontend }}"
+
+            echo "=== Starting Test Deployment ==="
+            echo "Backend: $BUILD_BACKEND"
+            echo "Wxmp: $BUILD_WXMP"
+            echo "Frontend: $BUILD_FRONTEND"
+
+            # 登录镜像仓库
+            echo "${{ secrets.GITHUB_TOKEN }}" | docker login ${{ env.REGISTRY }} -u ${{ github.actor }} --password-stdin
+
+            # 执行部署脚本
+            cd /opt/zhaoxinpms
+            bash scripts/deploy-test.sh
+
+            echo "=== Deployment Completed ==="
+
+      - name: Health Check
+        run: |
+          echo "Waiting for services to start..."
+          sleep 30
+          # 这里使用 curl 进行健康检查（需要在 GitHub Actions runner 能访问 test-server）
+          # 如果 runner 无法直接访问内网测试服务器，此步骤需要跳过或通过 SSH 在服务器上执行
+          echo "Health check endpoint: http://${{ secrets.TEST_SERVER_HOST }}:8080/actuator/health"
+          echo "Wxmp health check: http://${{ secrets.TEST_SERVER_HOST }}:8081/actuator/health"

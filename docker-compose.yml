@@ -1,0 +1,114 @@
+services:
+  mysql:
+    image: docker.m.daocloud.io/library/mysql:8.0
+    container_name: zhaoxin-pms-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: pms
+      TZ: Asia/Shanghai
+    ports:
+      - "3308:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./sql/0.10.1/pms.sql:/docker-entrypoint-initdb.d/01-pms.sql
+      - ./sql/workflow_view.sql:/docker-entrypoint-initdb.d/02-workflow_view.sql
+      - ./sql/0.11.0/resi_init.sql:/docker-entrypoint-initdb.d/03-resi_init.sql
+      - ./sql/0.11.0/resi_init_data.sql:/docker-entrypoint-initdb.d/04-resi_init_data.sql
+    command: >
+      --default-authentication-plugin=mysql_native_password
+      --character-set-server=utf8mb4
+      --collation-server=utf8mb4_unicode_ci
+      --sql-mode=STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION
+    networks:
+      - zhaoxin-net
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-proot"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  redis:
+    image: docker.m.daocloud.io/library/redis:6-buster
+    container_name: zhaoxin-pms-redis
+    ports:
+      - "6381:6379"
+    networks:
+      - zhaoxin-net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+
+  backend:
+    build:
+      context: .
+      dockerfile: docker/backend/Dockerfile
+      args:
+        MAVEN_IMAGE: docker.m.daocloud.io/library/maven:3.8-openjdk-8-slim
+        RUNTIME_IMAGE: docker.m.daocloud.io/library/eclipse-temurin:8-jre
+    image: ${BACKEND_IMAGE:-ghcr.io/caoyb888/zhiyuewy/backend:latest}
+    container_name: zhaoxin-pms-backend
+    ports:
+      - "8080:8080"
+    environment:
+      - SPRING_PROFILES_ACTIVE=druid,workflow,mqtt,docker
+    volumes:
+      - uploads_data:/uploads
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - zhaoxin-net
+
+  wxmp:
+    build:
+      context: .
+      dockerfile: docker/wxmp/Dockerfile
+      args:
+        MAVEN_IMAGE: docker.m.daocloud.io/library/maven:3.8-openjdk-8-slim
+        RUNTIME_IMAGE: docker.m.daocloud.io/library/eclipse-temurin:8-jre
+    image: ${WXMP_IMAGE:-ghcr.io/caoyb888/zhiyuewy/wxmp:latest}
+    container_name: zhaoxin-pms-wxmp
+    ports:
+      - "8081:8081"
+    environment:
+      - SPRING_PROFILES_ACTIVE=druid,docker
+    volumes:
+      - uploads_data:/uploads
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - zhaoxin-net
+
+  frontend:
+    build:
+      context: .
+      dockerfile: docker/frontend/Dockerfile
+      args:
+        NODE_IMAGE: docker.m.daocloud.io/library/node:16-alpine
+        NGINX_IMAGE: docker.m.daocloud.io/library/nginx:alpine
+    image: ${FRONTEND_IMAGE:-ghcr.io/caoyb888/zhiyuewy/frontend:latest}
+    container_name: zhaoxin-pms-frontend
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+      - wxmp
+    networks:
+      - zhaoxin-net
+
+networks:
+  zhaoxin-net:
+    driver: bridge
+
+volumes:
+  mysql_data:
+  uploads_data:

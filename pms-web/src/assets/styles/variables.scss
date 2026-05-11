@@ -1,0 +1,39 @@
+// base color - Vitality Neo 活力新知风
+$blue:#324157;
+$light-blue:#FF8C42;
+$red:#FF4D4F;
+$pink: #FF8ACC;
+$green: #00D26A;
+$tiffany: #4AB7BD;
+$yellow:#FFB800;
+$panGreen: #00D26A;
+
+// sidebar - 浅色活力风格
+$menuText:#334155;
+$menuActiveText:#FF6B35;
+$subMenuActiveText:#FF6B35;
+
+$menuBg:#ffffff;
+$menuHover:#FFF5F0;
+
+$subMenuBg:#F8FAFC;
+$subMenuHover:#FFF5F0;
+
+$sideBarWidth: 210px;
+
+// logo colors
+$logoTitleColor: #FF6B35;
+$logoLightTitleColor: #FF6B35;
+
+// the :export directive is the magic sauce for webpack
+// https://www.bluematador.com/blog/how-to-share-variables-between-js-and-sass
+:export {
+  menuText: $menuText;
+  menuActiveText: $menuActiveText;
+  subMenuActiveText: $subMenuActiveText;
+  menuBg: $menuBg;
+  menuHover: $menuHover;
+  subMenuBg: $subMenuBg;
+  subMenuHover: $subMenuHover;
+  sideBarWidth: $sideBarWidth;
+}

@@ -1,0 +1,26 @@
+# Docker 环境专用配置，覆盖数据库和 Redis 连接
+spring:
+  datasource:
+    druid:
+      master:
+        url: jdbc:mysql://mysql:3306/pms?useUnicode=true&characterEncoding=utf8&zeroDateTimeBehavior=convertToNull&useSSL=true&serverTimezone=GMT%2B8&nullCatalogMeansCurrent=true
+        username: root
+        password: root
+  redis:
+    host: redis
+    port: 6379
+    password:
+    timeout: 10s
+    lettuce:
+      pool:
+        min-idle: 0
+        max-idle: 8
+        max-active: 8
+        max-wait: -1ms
+
+  quartz:
+    job-store-type: memory
+
+ruoyi:
+  # 容器内文件存储路径
+  profile: /uploads

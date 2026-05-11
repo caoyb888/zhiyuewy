@@ -1,0 +1,38 @@
+# ============================================================
+# zhaoxinwy-wxmp Docker 环境专用配置
+# 作用：C端微信小程序后端服务（住宅物业收费模块）
+# 端口：8081
+# 依赖：MySQL、Redis
+# ============================================================
+
+server:
+  port: 8081
+
+spring:
+  application:
+    name: zhaoxinwy-wxmp
+  datasource:
+    druid:
+      master:
+        url: jdbc:mysql://mysql:3306/pms?useUnicode=true&characterEncoding=utf8&zeroDateTimeBehavior=convertToNull&useSSL=true&serverTimezone=GMT%2B8&nullCatalogMeansCurrent=true
+        username: root
+        password: root
+  redis:
+    host: redis
+    port: 6379
+    password:
+    timeout: 10s
+    # Redis 命名空间规范：住宅收费模块所有 Key 必须以 resi: 为前缀
+    # 示例：resi:dashboard:{projectId}:overview
+    #       resi:pay:notify:{orderId}
+    #       resi:receipt:no:{projectId}:{yyyyMMdd}
+    lettuce:
+      pool:
+        min-idle: 0
+        max-idle: 8
+        max-active: 8
+        max-wait: -1ms
+
+ruoyi:
+  # 容器内文件存储路径
+  profile: /uploads
