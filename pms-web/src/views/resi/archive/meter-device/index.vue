@@ -17,6 +17,12 @@
           <el-option label="暖气表" :value="4" />
         </el-select>
       </el-form-item>
+      <el-form-item label="是否公摊" prop="isPublic">
+        <el-select v-model="queryParams.isPublic" placeholder="请选择" clearable size="small" style="width: 120px">
+          <el-option label="分户表" :value="0" />
+          <el-option label="公摊总表" :value="1" />
+        </el-select>
+      </el-form-item>
       <el-form-item label="公摊组" prop="publicGroup">
         <el-input v-model="queryParams.publicGroup" placeholder="公摊组编号" clearable size="small" style="width: 150px" @keyup.enter.native="handleQuery" />
       </el-form-item>
@@ -42,7 +48,7 @@
     <el-table v-loading="loading" :data="deviceList" @selection-change="handleSelectionChange">
       <el-table-column type="selection" width="55" align="center" />
       <el-table-column label="仪表编号" align="center" prop="meterCode" width="120" />
-      <el-table-column label="仪表类型" align="center" prop="meterType" width="100">
+      <el-table-column label="仪表类型" align="center" prop="meterType" width="90">
         <template slot-scope="scope">
           <el-tag v-if="scope.row.meterType === 1" type="primary">水表</el-tag>
           <el-tag v-else-if="scope.row.meterType === 2" type="warning">电表</el-tag>
@@ -50,16 +56,29 @@
           <el-tag v-else-if="scope.row.meterType === 4" type="danger">暖气表</el-tag>
         </template>
       </el-table-column>
-      <el-table-column label="所属房间" align="center" prop="roomName" width="120" />
+      <el-table-column label="所属房间" align="center" prop="roomName" width="130">
+        <template slot-scope="scope">
+          <span>{{ scope.row.roomName || '—' }}</span>
+        </template>
+      </el-table-column>
       <el-table-column label="初始读数" align="center" prop="initReading" width="100" />
       <el-table-column label="倍率" align="center" prop="multiplier" width="80" />
-      <el-table-column label="是否公摊" align="center" prop="isPublic" width="100">
+      <el-table-column label="是否公摊" align="center" prop="isPublic" width="90">
         <template slot-scope="scope">
           <el-tag v-if="scope.row.isPublic === 1" type="danger">公摊总表</el-tag>
           <el-tag v-else type="success">分户表</el-tag>
         </template>
       </el-table-column>
-      <el-table-column label="公摊组" align="center" prop="publicGroup" width="120" />
+      <el-table-column label="公摊组" align="center" prop="publicGroup" width="120">
+        <template slot-scope="scope">
+          <span>{{ scope.row.publicGroup || '—' }}</span>
+        </template>
+      </el-table-column>
+      <el-table-column label="安装日期" align="center" prop="installDate" width="120">
+        <template slot-scope="scope">
+          <span>{{ scope.row.installDate ? parseTime(scope.row.installDate, '{y}-{m}-{d}') : '—' }}</span>
+        </template>
+      </el-table-column>
       <el-table-column label="创建时间" align="center" prop="createTime" width="160">
         <template slot-scope="scope">
           <span>{{ parseTime(scope.row.createTime) }}</span>
@@ -78,7 +97,7 @@
     <el-dialog :title="title" :visible.sync="open" width="500px" append-to-body>
       <el-form ref="form" :model="form" :rules="rules" label-width="100px">
         <el-form-item label="所属项目" prop="projectId">
-          <el-select v-model="form.projectId" placeholder="请选择项目" style="width: 100%">
+          <el-select v-model="form.projectId" placeholder="请选择项目" style="width: 100%" @change="handleProjectChange">
             <el-option v-for="item in projectOptions" :key="item.id" :label="item.name" :value="item.id" />
           </el-select>
         </el-form-item>
@@ -93,8 +112,16 @@
             <el-option label="暖气表" :value="4" />
           </el-select>
         </el-form-item>
+        <el-form-item label="是否公摊" prop="isPublic">
+          <el-radio-group v-model="form.isPublic" @change="handleIsPublicChange">
+            <el-radio :label="0">分户表</el-radio>
+            <el-radio :label="1">公摊总表</el-radio>
+          </el-radio-group>
+        </el-form-item>
         <el-form-item label="所属房间" prop="roomId">
-          <el-input v-model="form.roomId" placeholder="房间ID（公摊表可不填）" />
+          <el-select v-model="form.roomId" placeholder="请选择房间（公摊表可不选）" style="width: 100%" clearable filterable :disabled="form.isPublic === 1">
+            <el-option v-for="item in roomOptions" :key="item.id" :label="item.roomAlias || item.roomNo" :value="item.id" />
+          </el-select>
         </el-form-item>
         <el-form-item label="初始读数" prop="initReading">
           <el-input-number v-model="form.initReading" :min="0" :precision="4" controls-position="right" style="width: 100%" />
@@ -102,11 +129,8 @@
         <el-form-item label="倍率" prop="multiplier">
           <el-input-number v-model="form.multiplier" :min="0.0001" :precision="4" controls-position="right" style="width: 100%" />
         </el-form-item>
-        <el-form-item label="是否公摊" prop="isPublic">
-          <el-radio-group v-model="form.isPublic">
-            <el-radio :label="0">分户表</el-radio>
-            <el-radio :label="1">公摊总表</el-radio>
-          </el-radio-group>
+        <el-form-item label="安装日期" prop="installDate">
+          <el-date-picker v-model="form.installDate" type="date" placeholder="选择日期" style="width: 100%" value-format="yyyy-MM-dd" />
         </el-form-item>
         <el-form-item label="公摊组" prop="publicGroup">
           <el-input v-model="form.publicGroup" placeholder="请输入公摊组编号" maxlength="50" />
@@ -121,7 +145,7 @@
 </template>
 
 <script>
-import { listMeterDevice, getMeterDevice, addMeterDevice, updateMeterDevice, delMeterDevice, listProject } from "@/api/resi/archive";
+import { listMeterDevice, getMeterDevice, addMeterDevice, updateMeterDevice, delMeterDevice, listProject, listRoom } from "@/api/resi/archive";
 
 export default {
   name: "ResiMeterDevice",
@@ -135,6 +159,7 @@ export default {
       total: 0,
       deviceList: [],
       projectOptions: [],
+      roomOptions: [],
       title: "",
       open: false,
       queryParams: {
@@ -143,13 +168,21 @@ export default {
         projectId: undefined,
         meterCode: undefined,
         meterType: undefined,
+        isPublic: undefined,
         publicGroup: undefined
       },
       form: {},
       rules: {
         projectId: [{ required: true, message: "所属项目不能为空", trigger: "change" }],
         meterCode: [{ required: true, message: "仪表编号不能为空", trigger: "blur" }],
-        meterType: [{ required: true, message: "仪表类型不能为空", trigger: "change" }]
+        meterType: [{ required: true, message: "仪表类型不能为空", trigger: "change" }],
+        roomId: [{ required: true, message: "分户表必须选择所属房间", trigger: "change", validator: (rule, value, callback) => {
+          if (this.form.isPublic === 0 && !value) {
+            callback(new Error("分户表必须选择所属房间"));
+          } else {
+            callback();
+          }
+        }}]
       }
     };
   },
@@ -171,6 +204,15 @@ export default {
         this.projectOptions = response.rows;
       });
     },
+    loadRoomOptions(projectId) {
+      if (!projectId) {
+        this.roomOptions = [];
+        return;
+      }
+      listRoom({ projectId, pageNum: 1, pageSize: 1000 }).then(response => {
+        this.roomOptions = response.rows || [];
+      });
+    },
     cancel() {
       this.open = false;
       this.reset();
@@ -185,8 +227,10 @@ export default {
         initReading: 0,
         multiplier: 1,
         isPublic: 0,
+        installDate: undefined,
         publicGroup: undefined
       };
+      this.roomOptions = [];
       this.resetForm("form");
     },
     handleQuery() {
@@ -202,6 +246,15 @@ export default {
       this.single = selection.length !== 1;
       this.multiple = !selection.length;
     },
+    handleProjectChange() {
+      this.form.roomId = undefined;
+      this.loadRoomOptions(this.form.projectId);
+    },
+    handleIsPublicChange(val) {
+      if (val === 1) {
+        this.form.roomId = undefined;
+      }
+    },
     handleAdd() {
       this.reset();
       this.open = true;
@@ -212,6 +265,7 @@ export default {
       const id = row.id || this.ids;
       getMeterDevice(id).then(response => {
         this.form = response.data;
+        this.loadRoomOptions(this.form.projectId);
         this.open = true;
         this.title = "修改仪表";
       });
