@@ -1,27 +1,45 @@
 package com.zhaoxinms.resi.cashier.service.impl;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.util.ArrayList;
+import java.util.Date;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.TimeUnit;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
+import com.zhaoxinms.base.service.BillRuleService;
+import com.zhaoxinms.common.exception.ServiceException;
+import com.zhaoxinms.common.utils.SecurityUtils;
+import com.zhaoxinms.common.utils.StringUtils;
 import com.zhaoxinms.resi.archive.entity.ResiCustomer;
 import com.zhaoxinms.resi.archive.entity.ResiCustomerAsset;
 import com.zhaoxinms.resi.archive.entity.ResiRoom;
 import com.zhaoxinms.resi.archive.service.IResiCustomerAssetService;
 import com.zhaoxinms.resi.archive.service.IResiCustomerService;
 import com.zhaoxinms.resi.archive.service.IResiRoomService;
+import com.zhaoxinms.resi.cashier.dto.ResiCashierCalcReq;
+import com.zhaoxinms.resi.cashier.dto.ResiCashierCalcVo;
+import com.zhaoxinms.resi.cashier.dto.ResiCashierCollectReq;
+import com.zhaoxinms.resi.cashier.dto.ResiCashierCollectVo;
 import com.zhaoxinms.resi.cashier.dto.ResiCashierRoomSearchVo;
 import com.zhaoxinms.resi.cashier.dto.ResiCashierRoomSummaryVo;
 import com.zhaoxinms.resi.cashier.service.IResiCashierService;
 import com.zhaoxinms.resi.common.ResiConstants;
+import com.zhaoxinms.resi.feeconfig.entity.ResiDiscount;
+import com.zhaoxinms.resi.feeconfig.mapper.ResiDiscountMapper;
+import com.zhaoxinms.resi.finance.entity.ResiPayLog;
+import com.zhaoxinms.resi.finance.mapper.ResiPayLogMapper;
 import com.zhaoxinms.resi.receivable.entity.ResiReceivable;
 import com.zhaoxinms.resi.receivable.mapper.ResiReceivableMapper;
 
@@ -45,6 +63,20 @@ public class ResiCashierServiceImpl implements IResiCashierService {
     @Autowired
     private ResiReceivableMapper receivableMapper;
 
+    @Autowired
+    private ResiPayLogMapper payLogMapper;
+
+    @Autowired
+    private ResiDiscountMapper discountMapper;
+
+    @Autowired
+    private BillRuleService billRuleService;
+
+    @Autowired
+    private RedisTemplate<String, String> redisTemplate;
+
+    // ==================== S4-03 查询接口 ====================
+
     @Override
     public List<ResiCashierRoomSearchVo> searchRoom(String keyword, Long projectId) {
         List<ResiCashierRoomSearchVo> result = new ArrayList<>();
@@ -64,7 +96,6 @@ public class ResiCashierServiceImpl implements IResiCashierService {
             customerQuery.setCustomerName(keyword.trim());
             List<ResiCustomer> customers = customerService.selectResiCustomerList(customerQuery);
             for (ResiCustomer customer : customers) {
-                // 查询该客户当前绑定的房间
                 List<ResiCustomerAsset> assets = customerAssetService.lambdaQuery()
                         .eq(ResiCustomerAsset::getCustomerId, customer.getId())
                         .eq(ResiCustomerAsset::getAssetType, ResiConstants.ASSET_TYPE_ROOM)
@@ -84,7 +115,6 @@ public class ResiCashierServiceImpl implements IResiCashierService {
                             roomMap.put(roomId, vo);
                         }
                     } else {
-                        // 已存在，补充客户信息
                         ResiCashierRoomSearchVo vo = roomMap.get(roomId);
                         if (vo.getCustomerId() == null) {
                             vo.setCustomerId(customer.getId());
@@ -163,9 +193,285 @@ public class ResiCashierServiceImpl implements IResiCashierService {
         return summary;
     }
 
+    // ==================== S4-04 收款核心 ====================
+
+    @Override
+    public ResiCashierCalcVo calc(ResiCashierCalcReq req) {
+        // 1. 查询应收记录
+        List<ResiReceivable> receivables = receivableMapper.selectList(
+                new QueryWrapper<ResiReceivable>()
+                        .in("id", req.getReceivableIds())
+                        .isNull("delete_time"));
+
+        if (receivables.isEmpty()) {
+            throw new ServiceException("所选应收记录不存在");
+        }
+
+        // 2. 校验状态
+        for (ResiReceivable r : receivables) {
+            if (ResiConstants.PAY_STATE_PAID.equals(r.getPayState())) {
+                throw new ServiceException("费用【" + r.getFeeName() + "】已缴清，不可重复收款");
+            }
+            if (ResiConstants.PAY_STATE_WAIVED.equals(r.getPayState())) {
+                throw new ServiceException("费用【" + r.getFeeName() + "】已减免，不可收款");
+            }
+        }
+
+        // 3. 计算金额
+        BigDecimal totalAmount = BigDecimal.ZERO;
+        BigDecimal overdueAmount = BigDecimal.ZERO;
+        List<ResiCashierCalcVo.ReceivableItem> items = new ArrayList<>();
+
+        for (ResiReceivable r : receivables) {
+            totalAmount = totalAmount.add(r.getTotal() != null ? r.getTotal() : BigDecimal.ZERO);
+            overdueAmount = overdueAmount.add(r.getOverdueFee() != null ? r.getOverdueFee() : BigDecimal.ZERO);
+
+            ResiCashierCalcVo.ReceivableItem item = new ResiCashierCalcVo.ReceivableItem();
+            item.setId(r.getId());
+            item.setFeeName(r.getFeeName());
+            item.setBillPeriod(r.getBillPeriod());
+            item.setTotal(r.getTotal());
+            item.setOverdueFee(r.getOverdueFee());
+            item.setDiscountAmount(r.getDiscountAmount());
+            item.setReceivable(r.getReceivable());
+            items.add(item);
+        }
+
+        // 4. 折扣计算
+        BigDecimal discountAmount = BigDecimal.ZERO;
+        String discountName = null;
+        if (StringUtils.isNotBlank(req.getDiscountId())) {
+            ResiDiscount discount = discountMapper.selectById(req.getDiscountId());
+            if (discount != null && Integer.valueOf(1).equals(discount.getEnabledMark())) {
+                // 校验有效期
+                Date today = new Date();
+                if (discount.getValidStart() != null && today.before(discount.getValidStart())) {
+                    throw new ServiceException("折扣尚未生效");
+                }
+                if (discount.getValidEnd() != null && today.after(discount.getValidEnd())) {
+                    throw new ServiceException("折扣已过期");
+                }
+                // 校验费用范围
+                boolean applicable = checkDiscountApplicable(discount, receivables);
+                if (!applicable) {
+                    throw new ServiceException("该折扣不适用于所选费用");
+                }
+                // 计算折扣金额
+                BigDecimal rate = discount.getDiscountRate();
+                if (rate != null && rate.compareTo(BigDecimal.ONE) < 0) {
+                    discountAmount = totalAmount.multiply(BigDecimal.ONE.subtract(rate))
+                            .setScale(2, RoundingMode.HALF_UP);
+                }
+                discountName = discount.getDiscountName();
+            }
+        }
+
+        BigDecimal receivableAmount = totalAmount.add(overdueAmount).subtract(discountAmount);
+
+        ResiCashierCalcVo result = new ResiCashierCalcVo();
+        result.setItems(items);
+        result.setTotalAmount(totalAmount);
+        result.setOverdueAmount(overdueAmount);
+        result.setDiscountAmount(discountAmount);
+        result.setReceivableAmount(receivableAmount);
+        result.setPayAmount(receivableAmount);
+        result.setDiscountId(req.getDiscountId());
+        result.setDiscountName(discountName);
+        return result;
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public ResiCashierCollectVo collect(ResiCashierCollectReq req) {
+        Date now = new Date();
+        String userId = String.valueOf(SecurityUtils.getUserId());
+
+        // 1. SELECT FOR UPDATE 锁定应收记录（必须在事务内）
+        QueryWrapper<ResiReceivable> lockQw = new QueryWrapper<>();
+        lockQw.in("id", req.getReceivableIds())
+                .isNull("delete_time")
+                .last("FOR UPDATE");
+        List<ResiReceivable> lockedList = receivableMapper.selectList(lockQw);
+
+        if (lockedList.isEmpty()) {
+            throw new ServiceException("所选应收记录不存在");
+        }
+        if (lockedList.size() != req.getReceivableIds().size()) {
+            throw new ServiceException("部分应收记录不存在或已被删除");
+        }
+
+        // 2. 校验锁定后的记录状态
+        for (ResiReceivable r : lockedList) {
+            if (ResiConstants.PAY_STATE_PAID.equals(r.getPayState())) {
+                throw new ServiceException("费用【" + r.getFeeName() + "】已被收取，请刷新后重试");
+            }
+            if (ResiConstants.PAY_STATE_WAIVED.equals(r.getPayState())) {
+                throw new ServiceException("费用【" + r.getFeeName() + "】已减免，不可收款");
+            }
+        }
+
+        // 3. 计算金额
+        BigDecimal totalAmount = BigDecimal.ZERO;
+        BigDecimal overdueAmount = BigDecimal.ZERO;
+        for (ResiReceivable r : lockedList) {
+            totalAmount = totalAmount.add(r.getTotal() != null ? r.getTotal() : BigDecimal.ZERO);
+            overdueAmount = overdueAmount.add(r.getOverdueFee() != null ? r.getOverdueFee() : BigDecimal.ZERO);
+        }
+
+        // 4. 折扣计算
+        BigDecimal discountAmount = BigDecimal.ZERO;
+        if (StringUtils.isNotBlank(req.getDiscountId())) {
+            ResiDiscount discount = discountMapper.selectById(req.getDiscountId());
+            if (discount != null && Integer.valueOf(1).equals(discount.getEnabledMark())) {
+                Date today = new Date();
+                if ((discount.getValidStart() == null || !today.before(discount.getValidStart()))
+                        && (discount.getValidEnd() == null || !today.after(discount.getValidEnd()))) {
+                    boolean applicable = checkDiscountApplicable(discount, lockedList);
+                    if (applicable && discount.getDiscountRate() != null
+                            && discount.getDiscountRate().compareTo(BigDecimal.ONE) < 0) {
+                        discountAmount = totalAmount.multiply(BigDecimal.ONE.subtract(discount.getDiscountRate()))
+                                .setScale(2, RoundingMode.HALF_UP);
+                    }
+                }
+            }
+        }
+
+        BigDecimal expectedPay = totalAmount.add(overdueAmount).subtract(discountAmount);
+
+        // 5. 校验实收金额（允许少量误差 0.01）
+        if (req.getPayAmount() == null || req.getPayAmount().compareTo(BigDecimal.ZERO) <= 0) {
+            throw new ServiceException("实收金额必须大于0");
+        }
+        if (req.getPayAmount().subtract(expectedPay).abs().compareTo(new BigDecimal("0.02")) > 0) {
+            throw new ServiceException("实收金额与应收金额不符，应收：" + expectedPay + "元");
+        }
+
+        // 6. 生成收据号
+        String payNo = billRuleService.getNumber(ResiConstants.BILL_RULE_RESI_RECEIPT);
+        if (StringUtils.isBlank(payNo) || payNo.contains("单据规则不存在")) {
+            throw new ServiceException("收据号生成失败，请检查单据规则配置");
+        }
+
+        // 7. 批量更新应收记录
+        String payLogId = java.util.UUID.randomUUID().toString().replace("-", "");
+        for (ResiReceivable r : lockedList) {
+            BigDecimal thisReceivable = r.getReceivable() != null ? r.getReceivable() : BigDecimal.ZERO;
+            r.setPayState(ResiConstants.PAY_STATE_PAID);
+            r.setPaidAmount(thisReceivable);
+            r.setPayLogId(payLogId);
+            r.setPayTime(now);
+            r.setDiscountId(req.getDiscountId());
+            r.setDiscountAmount(discountAmount); // 简化：将总折扣平摊到每条记录（或只记录到第一条）
+            r.setLastModifyTime(now);
+            r.setLastModifyUserId(userId);
+            receivableMapper.updateById(r);
+        }
+
+        // 8. 组装资源名称和客户姓名
+        String resourceName = null;
+        String customerName = null;
+        ResiRoom room = roomService.getById(req.getResourceId());
+        if (room != null) {
+            resourceName = room.getRoomAlias();
+        }
+        List<ResiCustomerAsset> assets = customerAssetService.lambdaQuery()
+                .eq(ResiCustomerAsset::getAssetType, ResiConstants.ASSET_TYPE_ROOM)
+                .eq(ResiCustomerAsset::getAssetId, req.getResourceId())
+                .eq(ResiCustomerAsset::getIsCurrent, 1)
+                .list();
+        if (assets != null && !assets.isEmpty()) {
+            ResiCustomer customer = customerService.getById(assets.get(0).getCustomerId());
+            if (customer != null) {
+                customerName = customer.getCustomerName();
+            }
+        }
+
+        // 9. INSERT 收款流水
+        ResiPayLog payLog = new ResiPayLog();
+        payLog.setId(payLogId);
+        payLog.setProjectId(req.getProjectId());
+        payLog.setPayNo(payNo);
+        payLog.setResourceType(req.getResourceType());
+        payLog.setResourceId(req.getResourceId());
+        payLog.setResourceName(resourceName);
+        payLog.setCustomerName(customerName);
+        payLog.setPayType(ResiConstants.PAY_TYPE_COLLECT);
+        payLog.setPayMethod(req.getPayMethod());
+        payLog.setReceivableIds(com.alibaba.fastjson.JSON.toJSONString(req.getReceivableIds()));
+        payLog.setTotalAmount(totalAmount.add(overdueAmount));
+        payLog.setDiscountAmount(discountAmount);
+        payLog.setOverdueAmount(overdueAmount);
+        payLog.setPrePayAmount(BigDecimal.ZERO);
+        payLog.setPayAmount(req.getPayAmount());
+        payLog.setChangeAmount(req.getChangeAmount() != null ? req.getChangeAmount() : BigDecimal.ZERO);
+        payLog.setNote(req.getNote());
+        payLog.setDiscountId(req.getDiscountId());
+        payLog.setIsVerified(0);
+        payLog.setClient(1);
+        payLog.setCreatorTime(now);
+        payLog.setCreatorUserId(userId);
+        payLogMapper.insert(payLog);
+
+        // 10. 清除 Redis 看板缓存
+        try {
+            String pattern = "resi:dashboard:" + req.getProjectId() + ":*";
+            Set<String> keys = redisTemplate.keys(pattern);
+            if (keys != null && !keys.isEmpty()) {
+                redisTemplate.delete(keys);
+                log.info("收款后清除看板缓存 projectId={} keys={}", req.getProjectId(), keys.size());
+            }
+        } catch (Exception e) {
+            log.warn("清除看板缓存失败 projectId={} error={}", req.getProjectId(), e.getMessage());
+        }
+
+        log.info("收款成功 projectId={} roomId={} payNo={} amount={} receivableCount={}",
+                req.getProjectId(), req.getResourceId(), payNo, req.getPayAmount(), lockedList.size());
+
+        // 11. 组装返回结果
+        ResiCashierCollectVo result = new ResiCashierCollectVo();
+        result.setPayLogId(payLogId);
+        result.setPayNo(payNo);
+        result.setResourceName(resourceName);
+        result.setCustomerName(customerName);
+        result.setPayMethod(req.getPayMethod());
+        result.setTotalAmount(totalAmount.add(overdueAmount));
+        result.setDiscountAmount(discountAmount);
+        result.setPayAmount(req.getPayAmount());
+        result.setChangeAmount(req.getChangeAmount());
+        result.setPayTime(now);
+        result.setNote(req.getNote());
+
+        List<ResiCashierCollectVo.FeeItem> feeItems = new ArrayList<>();
+        for (ResiReceivable r : lockedList) {
+            ResiCashierCollectVo.FeeItem item = new ResiCashierCollectVo.FeeItem();
+            item.setFeeName(r.getFeeName());
+            item.setBillPeriod(r.getBillPeriod());
+            item.setAmount(r.getReceivable());
+            feeItems.add(item);
+        }
+        result.setFeeItems(feeItems);
+
+        return result;
+    }
+
+    // ==================== 私有方法 ====================
+
     /**
-     * 将 ResiRoom 转换为搜索结果 VO
+     * 检查折扣是否适用于所选费用
      */
+    private boolean checkDiscountApplicable(ResiDiscount discount, List<ResiReceivable> receivables) {
+        String feeScope = discount.getFeeScope();
+        if (feeScope == null || feeScope.trim().isEmpty() || "null".equals(feeScope)) {
+            return true; // 适用全部
+        }
+        for (ResiReceivable r : receivables) {
+            if (!feeScope.contains(r.getFeeId())) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     private ResiCashierRoomSearchVo convertToVo(ResiRoom room) {
         ResiCashierRoomSearchVo vo = new ResiCashierRoomSearchVo();
         vo.setId(room.getId());
@@ -177,7 +483,6 @@ public class ResiCashierServiceImpl implements IResiCashierService {
         vo.setProjectName(room.getProjectName());
         vo.setBuildingName(room.getBuildingName());
 
-        // 查询当前业主
         List<ResiCustomerAsset> assets = customerAssetService.lambdaQuery()
                 .eq(ResiCustomerAsset::getAssetType, ResiConstants.ASSET_TYPE_ROOM)
                 .eq(ResiCustomerAsset::getAssetId, room.getId())
@@ -191,7 +496,6 @@ public class ResiCashierServiceImpl implements IResiCashierService {
                 vo.setCustomerName(customer.getCustomerName());
             }
         }
-
         return vo;
     }
 }

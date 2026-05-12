@@ -5,8 +5,11 @@ import java.util.Map;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -16,6 +19,10 @@ import com.zhaoxinms.common.core.controller.BaseController;
 import com.zhaoxinms.common.core.domain.AjaxResult;
 import com.zhaoxinms.common.enums.BusinessType;
 import com.zhaoxinms.common.utils.StringUtils;
+import com.zhaoxinms.resi.cashier.dto.ResiCashierCalcReq;
+import com.zhaoxinms.resi.cashier.dto.ResiCashierCalcVo;
+import com.zhaoxinms.resi.cashier.dto.ResiCashierCollectReq;
+import com.zhaoxinms.resi.cashier.dto.ResiCashierCollectVo;
 import com.zhaoxinms.resi.cashier.dto.ResiCashierRoomSearchVo;
 import com.zhaoxinms.resi.cashier.dto.ResiCashierRoomSummaryVo;
 import com.zhaoxinms.resi.cashier.service.IResiCashierService;
@@ -78,5 +85,28 @@ public class ResiCashierController extends BaseController {
         }
         ResiCashierRoomSummaryVo summary = cashierService.getRoomSummary(roomId);
         return AjaxResult.success(summary);
+    }
+
+    /**
+     * 收款预览（仅计算不写库）
+     */
+    @ApiOperation("收银台-收款预览")
+    @PreAuthorize("@ss.hasPermi('resi:cashier:collect')")
+    @PostMapping("/calc")
+    public AjaxResult calc(@RequestBody @Validated ResiCashierCalcReq req) {
+        ResiCashierCalcVo result = cashierService.calc(req);
+        return AjaxResult.success(result);
+    }
+
+    /**
+     * 收款核心（事务+并发保护）
+     */
+    @ApiOperation("收银台-确认收款")
+    @PreAuthorize("@ss.hasPermi('resi:cashier:collect')")
+    @Log(title = "住宅收费-收银台-收款", businessType = BusinessType.UPDATE)
+    @PostMapping("/collect")
+    public AjaxResult collect(@RequestBody @Validated ResiCashierCollectReq req) {
+        ResiCashierCollectVo result = cashierService.collect(req);
+        return AjaxResult.success(result);
     }
 }

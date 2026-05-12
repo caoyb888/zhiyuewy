@@ -116,7 +116,7 @@
 
 <script>
 import { formatMoney, payStateLabel, payStateTagType } from '@/utils/resi'
-import { searchRoom, getRoomReceivables, getRoomSummary } from '@/api/resi/cashier'
+import { searchRoom, getRoomReceivables, getRoomSummary, calcCollect, collectPayment } from '@/api/resi/cashier'
 
 export default {
   name: 'ResiCashier',
@@ -137,13 +137,16 @@ export default {
       receivableList: [],
       selectedIds: [],
       currentRoomId: null,
+      currentProjectId: null,
       totalReceivable: 0,
       totalDiscount: 0,
       totalPay: 0,
       payForm: {
         payMethod: 'CASH',
-        payAmount: 0
-      }
+        payAmount: 0,
+        note: ''
+      },
+      calcResult: null
     }
   },
   created() {
@@ -197,7 +200,8 @@ export default {
           label: (room.roomAlias || room.roomNo || room.id) + (room.customerName ? ' (' + room.customerName + ')' : ''),
           type: 'room',
           isLeaf: true,
-          roomId: room.id
+          roomId: room.id,
+          projectId: room.projectId
         })
       })
       // 转换为数组结构
@@ -209,6 +213,7 @@ export default {
     handleNodeClick(data) {
       if (data.type === 'room') {
         this.currentRoomId = data.roomId
+        this.currentProjectId = data.projectId || null
         this.loadReceivables(data.roomId)
       }
     },
@@ -226,7 +231,7 @@ export default {
     },
     handleSelectionChange(selection) {
       this.selectedIds = selection.map(item => item.id)
-      // S4-03 阶段本地计算，S4-04 接入 calc 接口
+      // 本地快速计算展示金额
       let totalReceivable = 0
       let totalDiscount = 0
       selection.forEach(item => {
@@ -237,6 +242,7 @@ export default {
       this.totalDiscount = totalDiscount
       this.totalPay = totalReceivable - totalDiscount
       this.payForm.payAmount = Number(this.totalPay.toFixed(2))
+      this.calcResult = null
     },
     resetSummary() {
       this.totalReceivable = 0
@@ -245,10 +251,69 @@ export default {
       this.payForm.payAmount = 0
     },
     async handleCollect() {
+      if (this.selectedIds.length === 0) {
+        this.$message.warning('请至少选择一条待缴费用')
+        return
+      }
+      if (!this.currentRoomId) {
+        this.$message.warning('请先选择房间')
+        return
+      }
+      if (!this.currentProjectId) {
+        this.$message.warning('房间信息不完整，请重新搜索选择')
+        return
+      }
+      if (!this.payForm.payMethod) {
+        this.$message.warning('请选择支付方式')
+        return
+      }
+      if (!this.payForm.payAmount || this.payForm.payAmount <= 0) {
+        this.$message.warning('实收金额必须大于0')
+        return
+      }
+
       this.loading = true
       try {
-        // S4-04 实现收款核心接口
-        this.$message.warning('收款功能将在 S4-04 阶段实现')
+        // 1. 先调用 calc 预览接口做金额校验
+        const calcReq = {
+          projectId: this.currentProjectId,
+          receivableIds: this.selectedIds
+        }
+        const calcRes = await calcCollect(calcReq)
+        this.calcResult = calcRes.data
+        const expectedPay = Number(this.calcResult.receivableAmount || this.calcResult.payAmount || 0)
+        const actualPay = Number(this.payForm.payAmount)
+        if (Math.abs(expectedPay - actualPay) > 0.02) {
+          this.$message.warning('实收金额与应收金额不符，应收：' + expectedPay.toFixed(2) + ' 元')
+          return
+        }
+
+        // 2. 确认收款
+        const collectReq = {
+          projectId: this.currentProjectId,
+          resourceType: 'ROOM',
+          resourceId: this.currentRoomId,
+          receivableIds: this.selectedIds,
+          payMethod: this.payForm.payMethod,
+          payAmount: this.payForm.payAmount,
+          note: this.payForm.note || ''
+        }
+        const collectRes = await collectPayment(collectReq)
+        const result = collectRes.data
+
+        this.$message.success('收款成功！收据号：' + result.payNo)
+        this.$notify({
+          title: '收款成功',
+          message: '收据号：' + result.payNo + '，实收金额：' + result.payAmount + ' 元',
+          type: 'success',
+          duration: 5000
+        })
+
+        // 3. 刷新费用列表
+        this.loadReceivables(this.currentRoomId)
+      } catch (error) {
+        console.error('收款失败', error)
+        this.$message.error(error.response?.data?.msg || '收款失败，请重试')
       } finally {
         this.loading = false
       }
