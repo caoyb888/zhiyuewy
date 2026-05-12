@@ -58,6 +58,12 @@
             <version>1.6.2</version>
         </dependency>
 
+        <!-- Actuator 健康检查 -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-actuator</artifactId>
+        </dependency>
+
         <!-- 微信SDK -->
         <dependency>
             <groupId>com.github.binarywang</groupId>

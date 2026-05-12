@@ -49,6 +49,16 @@ logging:
     com.zhaoxinms: debug
     org.springframework: warn
 
+# Actuator 配置
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      show-details: always
+
 # 微信配置（从环境变量读取，禁止硬编码）
 resi:
   wx:
