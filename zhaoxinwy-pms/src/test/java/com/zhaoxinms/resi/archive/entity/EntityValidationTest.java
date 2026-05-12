@@ -447,6 +447,113 @@ class EntityValidationTest {
         return config;
     }
 
+    // ==================== ResiFeeDefinition 费用定义实体 ====================
+
+    @Test
+    @DisplayName("费用定义-新增：必填字段缺失应触发校验失败")
+    void feeDefinitionAdd_requiredFieldsMissing() {
+        com.zhaoxinms.resi.feeconfig.entity.ResiFeeDefinition def = new com.zhaoxinms.resi.feeconfig.entity.ResiFeeDefinition();
+
+        Set<ConstraintViolation<com.zhaoxinms.resi.feeconfig.entity.ResiFeeDefinition>> violations = validator.validate(def, AddGroup.class);
+
+        assertFalse(violations.isEmpty());
+        assertTrue(violations.stream().anyMatch(v -> v.getPropertyPath().toString().equals("projectId")),
+                "应有 projectId 必填错误");
+        assertTrue(violations.stream().anyMatch(v -> v.getPropertyPath().toString().equals("feeName")),
+                "应有 feeName 必填错误");
+        assertTrue(violations.stream().anyMatch(v -> v.getPropertyPath().toString().equals("feeCode")),
+                "应有 feeCode 必填错误");
+        assertTrue(violations.stream().anyMatch(v -> v.getPropertyPath().toString().equals("feeType")),
+                "应有 feeType 必填错误");
+        assertTrue(violations.stream().anyMatch(v -> v.getPropertyPath().toString().equals("calcType")),
+                "应有 calcType 必填错误");
+    }
+
+    @Test
+    @DisplayName("费用定义-新增：正常数据应通过校验")
+    void feeDefinitionAdd_valid() {
+        com.zhaoxinms.resi.feeconfig.entity.ResiFeeDefinition def = buildValidFeeDefinition();
+
+        Set<ConstraintViolation<com.zhaoxinms.resi.feeconfig.entity.ResiFeeDefinition>> violations = validator.validate(def, AddGroup.class);
+        assertTrue(violations.isEmpty(), "合法数据应无校验错误");
+    }
+
+    @Test
+    @DisplayName("费用定义-新增：feeName 超过100字符应触发 Size 校验")
+    void feeDefinitionAdd_feeNameTooLong() {
+        com.zhaoxinms.resi.feeconfig.entity.ResiFeeDefinition def = buildValidFeeDefinition();
+        def.setFeeName("N".repeat(101));
+
+        Set<ConstraintViolation<com.zhaoxinms.resi.feeconfig.entity.ResiFeeDefinition>> violations = validator.validate(def, AddGroup.class);
+        assertTrue(violations.stream().anyMatch(v -> v.getPropertyPath().toString().equals("feeName")),
+                "应有 feeName 长度超限错误");
+    }
+
+    @Test
+    @DisplayName("费用定义-新增：feeCode 超过50字符应触发 Size 校验")
+    void feeDefinitionAdd_feeCodeTooLong() {
+        com.zhaoxinms.resi.feeconfig.entity.ResiFeeDefinition def = buildValidFeeDefinition();
+        def.setFeeCode("C".repeat(51));
+
+        Set<ConstraintViolation<com.zhaoxinms.resi.feeconfig.entity.ResiFeeDefinition>> violations = validator.validate(def, AddGroup.class);
+        assertTrue(violations.stream().anyMatch(v -> v.getPropertyPath().toString().equals("feeCode")),
+                "应有 feeCode 长度超限错误");
+    }
+
+    @Test
+    @DisplayName("费用定义-新增：unitPrice 为负数应触发 DecimalMin 校验")
+    void feeDefinitionAdd_negativeUnitPrice_error() {
+        com.zhaoxinms.resi.feeconfig.entity.ResiFeeDefinition def = buildValidFeeDefinition();
+        def.setUnitPrice(new BigDecimal("-1.00"));
+
+        Set<ConstraintViolation<com.zhaoxinms.resi.feeconfig.entity.ResiFeeDefinition>> violations = validator.validate(def, AddGroup.class);
+        assertTrue(violations.stream().anyMatch(v -> v.getPropertyPath().toString().equals("unitPrice")),
+                "应有 unitPrice 负数错误");
+    }
+
+    @Test
+    @DisplayName("费用定义-新增：overdueRate 为负数应触发 DecimalMin 校验")
+    void feeDefinitionAdd_negativeOverdueRate_error() {
+        com.zhaoxinms.resi.feeconfig.entity.ResiFeeDefinition def = buildValidFeeDefinition();
+        def.setOverdueRate(new BigDecimal("-0.001"));
+
+        Set<ConstraintViolation<com.zhaoxinms.resi.feeconfig.entity.ResiFeeDefinition>> violations = validator.validate(def, AddGroup.class);
+        assertTrue(violations.stream().anyMatch(v -> v.getPropertyPath().toString().equals("overdueRate")),
+                "应有 overdueRate 负数错误");
+    }
+
+    @Test
+    @DisplayName("费用定义-新增：taxRate 超过100%应触发 DecimalMax 校验")
+    void feeDefinitionAdd_taxRateOver100_error() {
+        com.zhaoxinms.resi.feeconfig.entity.ResiFeeDefinition def = buildValidFeeDefinition();
+        def.setTaxRate(new BigDecimal("101.00"));
+
+        Set<ConstraintViolation<com.zhaoxinms.resi.feeconfig.entity.ResiFeeDefinition>> violations = validator.validate(def, AddGroup.class);
+        assertTrue(violations.stream().anyMatch(v -> v.getPropertyPath().toString().equals("taxRate")),
+                "应有 taxRate 超过100%错误");
+    }
+
+    @Test
+    @DisplayName("费用定义-新增：overdueRate 6位小数精度应通过")
+    void feeDefinitionAdd_overdueRate6Decimal_valid() {
+        com.zhaoxinms.resi.feeconfig.entity.ResiFeeDefinition def = buildValidFeeDefinition();
+        def.setOverdueRate(new BigDecimal("0.000500"));
+
+        Set<ConstraintViolation<com.zhaoxinms.resi.feeconfig.entity.ResiFeeDefinition>> violations = validator.validate(def, AddGroup.class);
+        assertTrue(violations.isEmpty(), "6位小数overdueRate应通过校验");
+    }
+
+    private com.zhaoxinms.resi.feeconfig.entity.ResiFeeDefinition buildValidFeeDefinition() {
+        com.zhaoxinms.resi.feeconfig.entity.ResiFeeDefinition def = new com.zhaoxinms.resi.feeconfig.entity.ResiFeeDefinition();
+        def.setProjectId(1L);
+        def.setFeeCode("WYF-001");
+        def.setFeeName("物业管理费");
+        def.setFeeType("PERIOD");
+        def.setCalcType("FIXED");
+        def.setCycleUnit("MONTH");
+        return def;
+    }
+
     // ==================== ResiMeterDevice 仪表实体 ====================
 
     @Test
@@ -492,6 +599,58 @@ class EntityValidationTest {
         Set<ConstraintViolation<ResiMeterDevice>> violations = validator.validate(device, AddGroup.class);
 
         assertTrue(violations.isEmpty(), "公摊表 roomId 为 null 应通过校验");
+    }
+
+    // ==================== ResiMeterReading 抄表记录实体 ====================
+
+    @Test
+    @DisplayName("抄表记录-新增：必填字段缺失应触发校验失败")
+    void meterReadingAdd_requiredFieldsMissing() {
+        com.zhaoxinms.resi.meter.entity.ResiMeterReading reading = new com.zhaoxinms.resi.meter.entity.ResiMeterReading();
+
+        Set<ConstraintViolation<com.zhaoxinms.resi.meter.entity.ResiMeterReading>> violations = validator.validate(reading, AddGroup.class);
+
+        assertFalse(violations.isEmpty());
+        assertTrue(violations.stream().anyMatch(v -> v.getPropertyPath().toString().equals("projectId")),
+                "应有 projectId 必填错误");
+        assertTrue(violations.stream().anyMatch(v -> v.getPropertyPath().toString().equals("meterId")),
+                "应有 meterId 必填错误");
+        assertTrue(violations.stream().anyMatch(v -> v.getPropertyPath().toString().equals("period")),
+                "应有 period 必填错误");
+        assertTrue(violations.stream().anyMatch(v -> v.getPropertyPath().toString().equals("currReading")),
+                "应有 currReading 必填错误");
+        assertTrue(violations.stream().anyMatch(v -> v.getPropertyPath().toString().equals("currDate")),
+                "应有 currDate 必填错误");
+    }
+
+    @Test
+    @DisplayName("抄表记录-新增：正常数据应通过校验")
+    void meterReadingAdd_valid() {
+        com.zhaoxinms.resi.meter.entity.ResiMeterReading reading = buildValidMeterReading();
+
+        Set<ConstraintViolation<com.zhaoxinms.resi.meter.entity.ResiMeterReading>> violations = validator.validate(reading, AddGroup.class);
+        assertTrue(violations.isEmpty(), "合法数据应无校验错误");
+    }
+
+    @Test
+    @DisplayName("抄表记录-新增：period 超过7字符应触发 Size 校验")
+    void meterReadingAdd_periodTooLong() {
+        com.zhaoxinms.resi.meter.entity.ResiMeterReading reading = buildValidMeterReading();
+        reading.setPeriod("2026-05-01");
+
+        Set<ConstraintViolation<com.zhaoxinms.resi.meter.entity.ResiMeterReading>> violations = validator.validate(reading, AddGroup.class);
+        assertTrue(violations.stream().anyMatch(v -> v.getPropertyPath().toString().equals("period")),
+                "应有 period 长度超限错误");
+    }
+
+    private com.zhaoxinms.resi.meter.entity.ResiMeterReading buildValidMeterReading() {
+        com.zhaoxinms.resi.meter.entity.ResiMeterReading reading = new com.zhaoxinms.resi.meter.entity.ResiMeterReading();
+        reading.setProjectId(1L);
+        reading.setMeterId(1L);
+        reading.setPeriod("2026-05");
+        reading.setCurrReading(new BigDecimal("200.0000"));
+        reading.setCurrDate(java.sql.Date.valueOf("2026-05-15"));
+        return reading;
     }
 
     // ==================== ResiCustomerAsset 资产绑定实体 ====================
