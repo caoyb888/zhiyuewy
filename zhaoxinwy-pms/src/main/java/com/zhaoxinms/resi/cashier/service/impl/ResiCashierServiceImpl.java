@@ -43,6 +43,7 @@ import com.zhaoxinms.resi.feeconfig.mapper.ResiDiscountMapper;
 import com.zhaoxinms.resi.finance.entity.ResiPayLog;
 import com.zhaoxinms.resi.finance.entity.ResiPreAccount;
 import com.zhaoxinms.resi.finance.mapper.ResiPayLogMapper;
+import com.zhaoxinms.resi.finance.service.IResiDepositService;
 import com.zhaoxinms.resi.finance.service.IResiPrePayService;
 import com.zhaoxinms.resi.receivable.entity.ResiReceivable;
 import com.zhaoxinms.resi.receivable.mapper.ResiReceivableMapper;
@@ -81,6 +82,9 @@ public class ResiCashierServiceImpl implements IResiCashierService {
 
     @Autowired
     private IResiPrePayService prePayService;
+
+    @Autowired
+    private IResiDepositService depositService;
 
     // ==================== S4-03 查询接口 ====================
 
@@ -511,7 +515,15 @@ public class ResiCashierServiceImpl implements IResiCashierService {
         payLog.setCreatorUserId(userId);
         payLogMapper.insert(payLog);
 
-        // 10. 清除 Redis 看板缓存
+        // 10. 押金处理：fee_type=DEPOSIT 时自动写入 resi_deposit
+        try {
+            depositService.createFromCollect(payLog, lockedList);
+        } catch (Exception e) {
+            log.warn("押金台账写入失败 payLogId={} error={}", payLogId, e.getMessage());
+            // 押金写入失败不影响收款主流程，但记录日志
+        }
+
+        // 11. 清除 Redis 看板缓存
         try {
             String pattern = "resi:dashboard:" + req.getProjectId() + ":*";
             Set<String> keys = redisTemplate.keys(pattern);

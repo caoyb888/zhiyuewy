@@ -28,7 +28,9 @@ import com.zhaoxinms.resi.cashier.dto.ResiCashierRoomSearchVo;
 import com.zhaoxinms.resi.cashier.dto.ResiCashierRoomSummaryVo;
 import com.zhaoxinms.resi.cashier.dto.ResiCashierWriteOffReq;
 import com.zhaoxinms.resi.cashier.service.IResiCashierService;
+import com.zhaoxinms.resi.finance.entity.ResiDeposit;
 import com.zhaoxinms.resi.finance.entity.ResiPayLog;
+import com.zhaoxinms.resi.finance.service.IResiDepositService;
 import com.zhaoxinms.resi.receivable.entity.ResiReceivable;
 
 import io.swagger.annotations.Api;
@@ -44,6 +46,9 @@ public class ResiCashierController extends BaseController {
 
     @Autowired
     private IResiCashierService cashierService;
+
+    @Autowired
+    private IResiDepositService depositService;
 
     /**
      * 模糊搜索房间（按 room_alias / room_no / customer_name）
@@ -135,5 +140,22 @@ public class ResiCashierController extends BaseController {
     public AjaxResult writeOff(@RequestBody @Validated ResiCashierWriteOffReq req) {
         ResiPayLog result = cashierService.writeOff(req);
         return AjaxResult.success(result);
+    }
+
+    /**
+     * 查询房间押金台账
+     */
+    @ApiOperation("收银台-查询房间押金")
+    @PreAuthorize("@ss.hasPermi('resi:cashier:query')")
+    @GetMapping("/room/{roomId}/deposits")
+    public AjaxResult getRoomDeposits(@PathVariable("roomId") Long roomId) {
+        if (roomId == null || roomId <= 0) {
+            return AjaxResult.error("房间ID不能为空");
+        }
+        com.zhaoxinms.resi.finance.dto.ResiDepositQuery query = new com.zhaoxinms.resi.finance.dto.ResiDepositQuery();
+        query.setResourceType("ROOM");
+        query.setResourceId(roomId);
+        List<ResiDeposit> list = depositService.list(query);
+        return AjaxResult.success(list);
     }
 }

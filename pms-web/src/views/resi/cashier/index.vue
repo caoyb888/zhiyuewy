@@ -63,6 +63,17 @@
               </template>
             </el-table-column>
           </el-table>
+          <!-- 押金信息提示 -->
+          <div v-if="depositList.length > 0" class="deposit-bar">
+            <i class="el-icon-money" />
+            <span>该房间有 <b>{{ depositList.length }}</b> 笔未退押金，合计 <b>{{ depositTotal | formatMoney }}</b></span>
+            <el-button
+              type="text"
+              size="mini"
+              icon="el-icon-view"
+              @click="$router.push('/resi/finance/deposit')"
+            >查看押金台账</el-button>
+          </div>
         </el-card>
       </el-col>
 
@@ -201,7 +212,7 @@
 
 <script>
 import { formatMoney, payStateLabel, payStateTagType } from '@/utils/resi'
-import { searchRoom, getRoomReceivables, getRoomSummary, calcCollect, collectPayment, getReceiptPrintData, getRoomPreAccounts } from '@/api/resi/cashier'
+import { searchRoom, getRoomReceivables, getRoomSummary, calcCollect, collectPayment, getReceiptPrintData, getRoomPreAccounts, getRoomDeposits } from '@/api/resi/cashier'
 
 export default {
   name: 'ResiCashier',
@@ -223,6 +234,7 @@ export default {
       selectedIds: [],
       currentRoomId: null,
       currentProjectId: null,
+      depositList: [],
       totalReceivable: 0,
       totalDiscount: 0,
       totalPay: 0,
@@ -244,6 +256,11 @@ export default {
         feeItems: [],
         operator: {}
       }
+    }
+  },
+  computed: {
+    depositTotal() {
+      return this.depositList.reduce((sum, d) => sum + Number(d.amount || 0) - Number(d.refundAmount || 0), 0)
     }
   },
   created() {
@@ -313,7 +330,15 @@ export default {
         this.currentProjectId = data.projectId || null
         this.loadReceivables(data.roomId)
         this.loadPreAccounts(data.projectId, data.roomId)
+        this.loadDeposits(data.roomId)
       }
+    },
+    loadDeposits(roomId) {
+      this.depositList = []
+      if (!roomId) return
+      getRoomDeposits(roomId).then(res => {
+        this.depositList = (res.data || []).filter(d => d.state === 'COLLECTED')
+      }).catch(() => {})
     },
     loadPreAccounts(projectId, roomId) {
       this.prePayAccounts = []
@@ -393,6 +418,7 @@ export default {
       this.payForm.payAmount = 0
       this.prePayAccounts = []
       this.usePrePay = false
+      this.depositList = []
     },
     async handleCollect() {
       if (this.selectedIds.length === 0) {
@@ -672,6 +698,23 @@ export default {
   font-size: 15px;
   font-weight: bold;
   color: #303133;
+}
+
+/* 押金信息条 */
+.deposit-bar {
+  margin-top: 8px;
+  padding: 8px 12px;
+  background: #fdf6ec;
+  border: 1px solid #f5dab1;
+  border-radius: 4px;
+  font-size: 13px;
+  color: #e6a23c;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.deposit-bar i {
+  margin-right: 6px;
 }
 .receipt-summary .text-warning {
   color: #e6a23c;
