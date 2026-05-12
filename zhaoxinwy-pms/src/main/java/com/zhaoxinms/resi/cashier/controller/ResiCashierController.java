@@ -23,9 +23,12 @@ import com.zhaoxinms.resi.cashier.dto.ResiCashierCalcReq;
 import com.zhaoxinms.resi.cashier.dto.ResiCashierCalcVo;
 import com.zhaoxinms.resi.cashier.dto.ResiCashierCollectReq;
 import com.zhaoxinms.resi.cashier.dto.ResiCashierCollectVo;
+import com.zhaoxinms.resi.cashier.dto.ResiCashierRefundReq;
 import com.zhaoxinms.resi.cashier.dto.ResiCashierRoomSearchVo;
 import com.zhaoxinms.resi.cashier.dto.ResiCashierRoomSummaryVo;
+import com.zhaoxinms.resi.cashier.dto.ResiCashierWriteOffReq;
 import com.zhaoxinms.resi.cashier.service.IResiCashierService;
+import com.zhaoxinms.resi.finance.entity.ResiPayLog;
 import com.zhaoxinms.resi.receivable.entity.ResiReceivable;
 
 import io.swagger.annotations.Api;
@@ -107,6 +110,30 @@ public class ResiCashierController extends BaseController {
     @PostMapping("/collect")
     public AjaxResult collect(@RequestBody @Validated ResiCashierCollectReq req) {
         ResiCashierCollectVo result = cashierService.collect(req);
+        return AjaxResult.success(result);
+    }
+
+    /**
+     * 退款
+     */
+    @ApiOperation("收银台-退款")
+    @PreAuthorize("@ss.hasPermi('resi:cashier:refund')")
+    @Log(title = "住宅收费-收银台-退款", businessType = BusinessType.UPDATE)
+    @PostMapping("/refund")
+    public AjaxResult refund(@RequestBody @Validated ResiCashierRefundReq req) {
+        ResiPayLog result = cashierService.refund(req);
+        return AjaxResult.success(result);
+    }
+
+    /**
+     * 冲红
+     */
+    @ApiOperation("收银台-冲红")
+    @PreAuthorize("@ss.hasPermi('resi:cashier:writeOff')")
+    @Log(title = "住宅收费-收银台-冲红", businessType = BusinessType.UPDATE)
+    @PostMapping("/write-off")
+    public AjaxResult writeOff(@RequestBody @Validated ResiCashierWriteOffReq req) {
+        ResiPayLog result = cashierService.writeOff(req);
         return AjaxResult.success(result);
     }
 }

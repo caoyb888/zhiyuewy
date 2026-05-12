@@ -32,8 +32,10 @@ import com.zhaoxinms.resi.cashier.dto.ResiCashierCalcReq;
 import com.zhaoxinms.resi.cashier.dto.ResiCashierCalcVo;
 import com.zhaoxinms.resi.cashier.dto.ResiCashierCollectReq;
 import com.zhaoxinms.resi.cashier.dto.ResiCashierCollectVo;
+import com.zhaoxinms.resi.cashier.dto.ResiCashierRefundReq;
 import com.zhaoxinms.resi.cashier.dto.ResiCashierRoomSearchVo;
 import com.zhaoxinms.resi.cashier.dto.ResiCashierRoomSummaryVo;
+import com.zhaoxinms.resi.cashier.dto.ResiCashierWriteOffReq;
 import com.zhaoxinms.resi.cashier.service.IResiCashierService;
 import com.zhaoxinms.resi.common.ResiConstants;
 import com.zhaoxinms.resi.feeconfig.entity.ResiDiscount;
@@ -452,6 +454,251 @@ public class ResiCashierServiceImpl implements IResiCashierService {
         result.setFeeItems(feeItems);
 
         return result;
+    }
+
+    // ==================== S5-01 退款 + 冲红 ====================
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public ResiPayLog refund(ResiCashierRefundReq req) {
+        Date now = new Date();
+        String userId = String.valueOf(SecurityUtils.getUserId());
+
+        // 1. 查询原收款流水并锁定（FOR UPDATE 通过事务内查询实现）
+        ResiPayLog originalLog = payLogMapper.selectById(req.getPayLogId());
+        if (originalLog == null) {
+            throw new ServiceException("收款流水不存在");
+        }
+
+        // 2. 校验原流水状态
+        if (!ResiConstants.PAY_TYPE_COLLECT.equals(originalLog.getPayType())) {
+            throw new ServiceException("只有收款流水可以退款");
+        }
+        if (Integer.valueOf(1).equals(originalLog.getIsVerified())) {
+            throw new ServiceException("已复核的收款单不可退款");
+        }
+        // 校验是否已被冲红（存在parent_log_id指向它的WRITEOFF记录）
+        if (isWriteOffed(originalLog.getId())) {
+            throw new ServiceException("该收款单已被冲红，不可退款");
+        }
+
+        // 3. 校验退款金额
+        BigDecimal paidAmount = originalLog.getPayAmount() != null ? originalLog.getPayAmount() : BigDecimal.ZERO;
+        BigDecimal refundAmount = req.getRefundAmount();
+        if (refundAmount.compareTo(paidAmount) > 0) {
+            throw new ServiceException("退款金额不能超出已收金额");
+        }
+        if (refundAmount.compareTo(BigDecimal.ZERO) <= 0) {
+            throw new ServiceException("退款金额必须大于0");
+        }
+
+        // 4. 解析关联的应收记录并锁定
+        List<String> receivableIds = parseReceivableIds(originalLog.getReceivableIds());
+        if (receivableIds.isEmpty()) {
+            throw new ServiceException("原收款流水未关联应收记录");
+        }
+
+        QueryWrapper<ResiReceivable> lockQw = new QueryWrapper<>();
+        lockQw.in("id", receivableIds).last("FOR UPDATE");
+        List<ResiReceivable> lockedList = receivableMapper.selectList(lockQw);
+
+        // 押金费用需走押金退款流程，不支持通用退款
+        for (ResiReceivable r : lockedList) {
+            if (ResiConstants.FEE_TYPE_DEPOSIT.equals(r.getFeeType())) {
+                throw new ServiceException("押金费用请通过押金台账进行退款");
+            }
+        }
+
+        // 5. 更新应收记录（按退款比例或全额回退）
+        // 简化逻辑：优先回退最后一条应收的 paid_amount，若退款金额等于收款金额则全部回退
+        BigDecimal remainingRefund = refundAmount;
+        for (ResiReceivable r : lockedList) {
+            BigDecimal rPaid = r.getPaidAmount() != null ? r.getPaidAmount() : BigDecimal.ZERO;
+            BigDecimal rReceivable = r.getReceivable() != null ? r.getReceivable() : BigDecimal.ZERO;
+            if (rPaid.compareTo(BigDecimal.ZERO) <= 0) {
+                continue;
+            }
+            BigDecimal deduct = remainingRefund.min(rPaid);
+            BigDecimal newPaid = rPaid.subtract(deduct);
+            r.setPaidAmount(newPaid);
+            if (newPaid.compareTo(BigDecimal.ZERO) <= 0) {
+                r.setPayState(ResiConstants.PAY_STATE_UNPAID);
+                r.setPayLogId(null);
+                r.setPayTime(null);
+            } else if (newPaid.compareTo(rReceivable) < 0) {
+                r.setPayState(ResiConstants.PAY_STATE_PART_PAID);
+            }
+            r.setLastModifyTime(now);
+            r.setLastModifyUserId(userId);
+            receivableMapper.updateById(r);
+            remainingRefund = remainingRefund.subtract(deduct);
+            if (remainingRefund.compareTo(BigDecimal.ZERO) <= 0) {
+                break;
+            }
+        }
+
+        // 6. 生成退款流水
+        String refundLogId = java.util.UUID.randomUUID().toString().replace("-", "");
+        String refundPayNo = billRuleService.getNumber(ResiConstants.BILL_RULE_RESI_RECEIPT);
+        if (StringUtils.isBlank(refundPayNo) || refundPayNo.contains("单据规则不存在")) {
+            throw new ServiceException("退款单号生成失败，请检查单据规则配置");
+        }
+
+        ResiPayLog refundLog = new ResiPayLog();
+        refundLog.setId(refundLogId);
+        refundLog.setProjectId(originalLog.getProjectId());
+        refundLog.setPayNo(refundPayNo);
+        refundLog.setResourceType(originalLog.getResourceType());
+        refundLog.setResourceId(originalLog.getResourceId());
+        refundLog.setResourceName(originalLog.getResourceName());
+        refundLog.setCustomerName(originalLog.getCustomerName());
+        refundLog.setPayType(ResiConstants.PAY_TYPE_REFUND);
+        refundLog.setPayMethod(req.getRefundMethod());
+        refundLog.setReceivableIds(originalLog.getReceivableIds());
+        refundLog.setTotalAmount(originalLog.getTotalAmount());
+        refundLog.setDiscountAmount(originalLog.getDiscountAmount());
+        refundLog.setOverdueAmount(originalLog.getOverdueAmount());
+        refundLog.setPrePayAmount(BigDecimal.ZERO);
+        refundLog.setPayAmount(refundAmount.negate()); // 退款金额为负，表示支出
+        refundLog.setChangeAmount(BigDecimal.ZERO);
+        refundLog.setNote(req.getNote());
+        refundLog.setParentLogId(originalLog.getId());
+        refundLog.setIsVerified(0);
+        refundLog.setClient(ResiConstants.CLIENT_B_END);
+        refundLog.setCreatorTime(now);
+        refundLog.setCreatorUserId(userId);
+        payLogMapper.insert(refundLog);
+
+        // 7. 清除 Redis 看板缓存
+        try {
+            String pattern = "resi:dashboard:" + originalLog.getProjectId() + ":*";
+            Set<String> keys = redisTemplate.keys(pattern);
+            if (keys != null && !keys.isEmpty()) {
+                redisTemplate.delete(keys);
+                log.info("退款后清除看板缓存 projectId={} keys={}", originalLog.getProjectId(), keys.size());
+            }
+        } catch (Exception e) {
+            log.warn("清除看板缓存失败 projectId={} error={}", originalLog.getProjectId(), e.getMessage());
+        }
+
+        log.info("退款成功 payLogId={} refundAmount={} refundPayNo={}", req.getPayLogId(), refundAmount, refundPayNo);
+        return refundLog;
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public ResiPayLog writeOff(ResiCashierWriteOffReq req) {
+        Date now = new Date();
+        String userId = String.valueOf(SecurityUtils.getUserId());
+
+        // 1. 查询原收款流水
+        ResiPayLog originalLog = payLogMapper.selectById(req.getPayLogId());
+        if (originalLog == null) {
+            throw new ServiceException("收款流水不存在");
+        }
+
+        // 2. 校验原流水状态
+        if (!ResiConstants.PAY_TYPE_COLLECT.equals(originalLog.getPayType())) {
+            throw new ServiceException("只有收款流水可以冲红");
+        }
+        if (Integer.valueOf(1).equals(originalLog.getIsVerified())) {
+            throw new ServiceException("已复核的收款单不可冲红");
+        }
+        if (isWriteOffed(originalLog.getId())) {
+            throw new ServiceException("该收款单已被冲红，不可重复操作");
+        }
+
+        // 3. 解析关联的应收记录并锁定
+        List<String> receivableIds = parseReceivableIds(originalLog.getReceivableIds());
+        if (!receivableIds.isEmpty()) {
+            QueryWrapper<ResiReceivable> lockQw = new QueryWrapper<>();
+            lockQw.in("id", receivableIds).last("FOR UPDATE");
+            List<ResiReceivable> lockedList = receivableMapper.selectList(lockQw);
+
+            // 4. 回退应收记录状态
+            for (ResiReceivable r : lockedList) {
+                r.setPayState(ResiConstants.PAY_STATE_UNPAID);
+                r.setPaidAmount(BigDecimal.ZERO);
+                r.setPayLogId(null);
+                r.setPayTime(null);
+                r.setLastModifyTime(now);
+                r.setLastModifyUserId(userId);
+                receivableMapper.updateById(r);
+            }
+        }
+
+        // 5. 生成对冲流水（金额为负数）
+        String writeOffLogId = java.util.UUID.randomUUID().toString().replace("-", "");
+        String writeOffPayNo = billRuleService.getNumber(ResiConstants.BILL_RULE_RESI_RECEIPT);
+        if (StringUtils.isBlank(writeOffPayNo) || writeOffPayNo.contains("单据规则不存在")) {
+            throw new ServiceException("冲红单号生成失败，请检查单据规则配置");
+        }
+
+        ResiPayLog writeOffLog = new ResiPayLog();
+        writeOffLog.setId(writeOffLogId);
+        writeOffLog.setProjectId(originalLog.getProjectId());
+        writeOffLog.setPayNo(writeOffPayNo);
+        writeOffLog.setResourceType(originalLog.getResourceType());
+        writeOffLog.setResourceId(originalLog.getResourceId());
+        writeOffLog.setResourceName(originalLog.getResourceName());
+        writeOffLog.setCustomerName(originalLog.getCustomerName());
+        writeOffLog.setPayType(ResiConstants.PAY_TYPE_WRITEOFF);
+        writeOffLog.setPayMethod(originalLog.getPayMethod());
+        writeOffLog.setReceivableIds(originalLog.getReceivableIds());
+        writeOffLog.setTotalAmount(originalLog.getTotalAmount().negate());
+        writeOffLog.setDiscountAmount(originalLog.getDiscountAmount().negate());
+        writeOffLog.setOverdueAmount(originalLog.getOverdueAmount().negate());
+        writeOffLog.setPrePayAmount(BigDecimal.ZERO);
+        writeOffLog.setPayAmount(originalLog.getPayAmount().negate());
+        writeOffLog.setChangeAmount(BigDecimal.ZERO);
+        writeOffLog.setNote(req.getNote());
+        writeOffLog.setParentLogId(originalLog.getId());
+        writeOffLog.setIsVerified(0);
+        writeOffLog.setClient(ResiConstants.CLIENT_B_END);
+        writeOffLog.setCreatorTime(now);
+        writeOffLog.setCreatorUserId(userId);
+        payLogMapper.insert(writeOffLog);
+
+        // 6. 清除 Redis 看板缓存
+        try {
+            String pattern = "resi:dashboard:" + originalLog.getProjectId() + ":*";
+            Set<String> keys = redisTemplate.keys(pattern);
+            if (keys != null && !keys.isEmpty()) {
+                redisTemplate.delete(keys);
+                log.info("冲红后清除看板缓存 projectId={} keys={}", originalLog.getProjectId(), keys.size());
+            }
+        } catch (Exception e) {
+            log.warn("清除看板缓存失败 projectId={} error={}", originalLog.getProjectId(), e.getMessage());
+        }
+
+        log.info("冲红成功 payLogId={} writeOffPayNo={}", req.getPayLogId(), writeOffPayNo);
+        return writeOffLog;
+    }
+
+    /**
+     * 判断指定收款流水是否已被冲红
+     */
+    private boolean isWriteOffed(String payLogId) {
+        QueryWrapper<ResiPayLog> qw = new QueryWrapper<>();
+        qw.eq("parent_log_id", payLogId);
+        qw.eq("pay_type", ResiConstants.PAY_TYPE_WRITEOFF);
+        return payLogMapper.selectCount(qw) > 0;
+    }
+
+    /**
+     * 解析JSON格式的应收ID列表
+     */
+    private List<String> parseReceivableIds(String receivableIdsJson) {
+        List<String> list = new ArrayList<>();
+        if (StringUtils.isBlank(receivableIdsJson)) {
+            return list;
+        }
+        try {
+            list = com.alibaba.fastjson.JSON.parseArray(receivableIdsJson, String.class);
+        } catch (Exception e) {
+            log.warn("解析receivableIds失败 json={}", receivableIdsJson);
+        }
+        return list != null ? list : new ArrayList<>();
     }
 
     // ==================== 私有方法 ====================

@@ -4,7 +4,7 @@ import request from '@/utils/request'
 
 export function listPayLog(query) {
   return request({
-    url: '/resi/finance/pay-log',
+    url: '/resi/finance/pay-log/list',
     method: 'get',
     params: query
   })
@@ -14,6 +14,13 @@ export function getPayLog(id) {
   return request({
     url: '/resi/finance/pay-log/' + id,
     method: 'get'
+  })
+}
+
+export function verifyPayLog(id) {
+  return request({
+    url: '/resi/finance/pay-log/' + id + '/verify',
+    method: 'post'
   })
 }
 
