@@ -46,6 +46,9 @@
       <el-col :span="1.5">
         <el-button type="danger" plain icon="el-icon-delete" size="mini" :disabled="multiple" @click="handleDelete" v-hasPermi="['resi:receivable:remove']">删除</el-button>
       </el-col>
+      <el-col :span="1.5">
+        <el-button type="success" plain icon="el-icon-printer" size="mini" :disabled="multiple" @click="handlePrintNotice" v-hasPermi="['resi:receivable:list']">打印通知单</el-button>
+      </el-col>
       <right-toolbar :showSearch.sync="showSearch" @queryTable="getList"></right-toolbar>
     </el-row>
 
@@ -100,6 +103,7 @@
       <el-table-column label="操作" align="center" class-name="small-padding fixed-width" width="150">
         <template slot-scope="scope">
           <el-button size="mini" type="text" icon="el-icon-view" @click="handleDetail(scope.row)">详情</el-button>
+          <el-button size="mini" type="text" icon="el-icon-printer" @click="handlePrintNoticeSingle(scope.row)" v-hasPermi="['resi:receivable:list']">打印通知单</el-button>
           <el-button v-if="scope.row.payState === '0'" size="mini" type="text" icon="el-icon-delete" @click="handleDelete(scope.row)" v-hasPermi="['resi:receivable:remove']">删除</el-button>
         </template>
       </el-table-column>
@@ -232,6 +236,7 @@
 
 <script>
 import { listReceivable, delReceivable, generateReceivable, createTempReceivable } from "@/api/resi/receivable";
+import { getNoticePrintData, batchNoticePrintData } from "@/api/resi/cashier";
 import { formatMoney } from "@/utils/resi";
 import { listProject } from "@/api/resi/archive";
 import { listRoom } from "@/api/resi/archive";
@@ -297,6 +302,8 @@ export default {
       // 详情
       detailOpen: false,
       detailData: {},
+      // 打印通知单
+      printNoticeLoading: false,
       // 查询
       queryParams: {
         pageNum: 1,
@@ -461,6 +468,156 @@ export default {
     handleDetail(row) {
       this.detailData = row;
       this.detailOpen = true;
+    },
+    // 单条打印通知单
+    handlePrintNoticeSingle(row) {
+      this.printNoticeLoading = true;
+      getNoticePrintData(row.id).then(res => {
+        this.renderNoticePrint([res.data]);
+      }).catch(() => {
+        this.$message.error('获取通知单数据失败');
+      }).finally(() => {
+        this.printNoticeLoading = false;
+      });
+    },
+    // 批量打印通知单
+    handlePrintNotice() {
+      if (!this.ids || this.ids.length === 0) {
+        this.$modal.msgWarning('请至少选择一条应收记录');
+        return;
+      }
+      this.printNoticeLoading = true;
+      batchNoticePrintData(this.ids).then(res => {
+        const data = res.data || [];
+        if (data.length === 0) {
+          this.$modal.msgWarning('无可打印的通知单数据');
+          return;
+        }
+        this.renderNoticePrint(data);
+      }).catch(() => {
+        this.$message.error('获取通知单数据失败');
+      }).finally(() => {
+        this.printNoticeLoading = false;
+      });
+    },
+    // 渲染缴费通知单打印页面
+    renderNoticePrint(noticeList) {
+      const printWindow = window.open('', '_blank');
+      if (!printWindow) {
+        this.$message.warning('请允许浏览器弹窗以进行打印');
+        return;
+      }
+
+      let noticesHtml = '';
+      noticeList.forEach((notice, index) => {
+        const cfg = notice.config || {};
+        const proj = notice.project || {};
+        const cust = notice.customer || {};
+        const items = notice.feeItems || [];
+
+        let feeRows = '';
+        items.forEach(item => {
+          feeRows += `<tr>
+            <td>${item.feeName || '-'}</td>
+            <td align="center">${item.billPeriod || '-'}</td>
+            <td align="center">${item.beginDate ? this.parseTime(item.beginDate, '{y}-{m}-{d}') : '-'}</td>
+            <td align="center">${item.endDate ? this.parseTime(item.endDate, '{y}-{m}-{d}') : '-'}</td>
+            <td align="right">${this.formatMoney(item.price)}</td>
+            <td align="center">${item.num || '-'}</td>
+            <td align="right">${this.formatMoney(item.total)}</td>
+            <td align="right">${this.formatMoney(item.overdueFee)}</td>
+            <td align="right">${this.formatMoney(item.receivable)}</td>
+          </tr>`;
+        });
+
+        noticesHtml += `
+        <div class="notice-page">
+          <div class="header">
+            <h2>${cfg.title || '缴费通知单'}</h2>
+            <div class="org">${cfg.collectOrg || proj.name || ''}</div>
+          </div>
+          <div class="info-row">
+            <span><b>房间：</b>${cust.resourceName || '-'}</span>
+            <span><b>业主：</b>${cust.customerName || '-'}</span>
+          </div>
+          <div class="info-row">
+            <span><b>项目地址：</b>${proj.address || '-'}</span>
+            <span><b>联系电话：</b>${proj.contactPhone || '-'}</span>
+          </div>
+          <div class="info-row">
+            <span><b>通知日期：</b>${notice.noticeDate ? this.parseTime(notice.noticeDate, '{y}-{m}-{d}') : this.parseTime(new Date(), '{y}-{m}-{d}')}</span>
+          </div>
+          <table>
+            <thead>
+              <tr>
+                <th>费用名称</th>
+                <th width="90">账单月</th>
+                <th width="100">开始日期</th>
+                <th width="100">结束日期</th>
+                <th width="90">单价</th>
+                <th width="60">数量</th>
+                <th width="100">金额</th>
+                <th width="100">滞纳金</th>
+                <th width="100">应收金额</th>
+              </tr>
+            </thead>
+            <tbody>${feeRows}</tbody>
+          </table>
+          <div class="summary">
+            <div class="summary-row total">
+              <span>合计应收金额</span>
+              <span>${this.formatMoney(notice.totalReceivable)}</span>
+            </div>
+          </div>
+          ${cfg.remark ? '<div class="remark">备注：' + cfg.remark + '</div>' : ''}
+          <div class="footer">
+            <span>本通知单由肇新智慧物业系统自动生成</span>
+            <span>打印时间：${this.parseTime(new Date())}</span>
+          </div>
+        </div>
+        ${index < noticeList.length - 1 ? '<div class="page-break"></div>' : ''}`;
+      });
+
+      const html = `
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>缴费通知单</title>
+<style>
+  body { font-family: "Microsoft YaHei", sans-serif; margin: 0; padding: 0; color: #333; }
+  .notice-page { max-width: 720px; margin: 20px auto; border: 1px solid #ccc; padding: 24px; }
+  .header { text-align: center; margin-bottom: 20px; }
+  .header h2 { margin: 0; font-size: 22px; }
+  .header .org { font-size: 14px; color: #666; margin-top: 4px; }
+  .info-row { display: flex; justify-content: space-between; margin: 8px 0; font-size: 13px; }
+  table { width: 100%; border-collapse: collapse; margin-top: 12px; font-size: 13px; }
+  th, td { border: 1px solid #ccc; padding: 6px 8px; }
+  th { background: #f5f5f5; }
+  .summary { margin-top: 16px; font-size: 14px; }
+  .summary-row { display: flex; justify-content: space-between; margin: 4px 0; }
+  .summary-row.total { font-size: 15px; font-weight: bold; }
+  .remark { margin-top: 12px; font-size: 12px; color: #666; }
+  .footer { margin-top: 24px; font-size: 12px; color: #666; display: flex; justify-content: space-between; }
+  .page-break { page-break-after: always; }
+  @media print {
+    body { margin: 0; }
+    .no-print { display: none; }
+    .page-break { page-break-after: always; }
+  }
+</style>
+</head>
+<body>
+${noticesHtml}
+<div class="no-print" style="text-align:center;margin-top:20px;">
+  <button onclick="window.print()" style="padding:8px 24px;font-size:14px;cursor:pointer;">打印</button>
+  <button onclick="window.close()" style="padding:8px 24px;font-size:14px;cursor:pointer;margin-left:12px;">关闭</button>
+</div>
+</body>
+</html>`;
+
+      printWindow.document.write(html);
+      printWindow.document.close();
     }
   }
 };

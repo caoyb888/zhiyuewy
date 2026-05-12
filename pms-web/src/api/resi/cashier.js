@@ -65,6 +65,21 @@ export function getReceiptPrintData(payLogId) {
   })
 }
 
+export function getNoticePrintData(receivableId) {
+  return request({
+    url: '/resi/print/notice/' + receivableId,
+    method: 'get'
+  })
+}
+
+export function batchNoticePrintData(receivableIds) {
+  return request({
+    url: '/resi/print/notice/batch',
+    method: 'post',
+    data: receivableIds
+  })
+}
+
 export function refundPayment(data) {
   return request({
     url: '/resi/cashier/refund',
