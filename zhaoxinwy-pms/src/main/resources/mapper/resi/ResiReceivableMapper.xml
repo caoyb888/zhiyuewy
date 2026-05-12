@@ -41,6 +41,64 @@
         <result property="deleteUserId" column="delete_user_id"/>
     </resultMap>
 
+    <sql id="selectResiReceivableVo">
+        SELECT id, project_id, resource_type, resource_id, resource_name,
+               customer_id, customer_name, fee_id, fee_name, fee_type,
+               bill_period, begin_date, end_date, num, price, total,
+               overdue_fee, discount_id, discount_amount, receivable,
+               pay_state, paid_amount, pay_log_id, pay_time, gen_batch,
+               meter_reading_id, remark, enabled_mark,
+               creator_time, creator_user_id, last_modify_time, last_modify_user_id,
+               delete_time, delete_user_id
+        FROM resi_receivable
+    </sql>
+
+    <select id="selectResiReceivableList" parameterType="com.zhaoxinms.resi.receivable.dto.ResiReceivableQuery"
+            resultMap="ResiReceivableResult">
+        <include refid="selectResiReceivableVo"/>
+        <where>
+            delete_time IS NULL
+            <if test="projectId != null">
+                AND project_id = #{projectId}
+            </if>
+            <if test="billPeriod != null and billPeriod != ''">
+                AND bill_period = #{billPeriod}
+            </if>
+            <if test="feeId != null and feeId != ''">
+                AND fee_id = #{feeId}
+            </if>
+            <if test="payState != null and payState != ''">
+                AND pay_state = #{payState}
+            </if>
+            <if test="resourceType != null and resourceType != ''">
+                AND resource_type = #{resourceType}
+            </if>
+            <if test="resourceId != null">
+                AND resource_id = #{resourceId}
+            </if>
+            <if test="resourceName != null and resourceName != ''">
+                AND resource_name LIKE CONCAT('%', #{resourceName}, '%')
+            </if>
+            <if test="customerName != null and customerName != ''">
+                AND customer_name LIKE CONCAT('%', #{customerName}, '%')
+            </if>
+            <if test="feeType != null and feeType != ''">
+                AND fee_type = #{feeType}
+            </if>
+            <if test="genBatch != null and genBatch != ''">
+                AND gen_batch = #{genBatch}
+            </if>
+            <!-- 项目权限隔离：AOP 注入 projectIds -->
+            <if test="projectIds != null and projectIds.size() > 0">
+                AND project_id IN
+                <foreach collection="projectIds" item="pid" open="(" separator="," close=")">
+                    #{pid}
+                </foreach>
+            </if>
+        </where>
+        ORDER BY creator_time DESC
+    </select>
+
     <!-- 批量插入应收记录 -->
     <insert id="batchInsert">
         INSERT INTO resi_receivable (

@@ -176,4 +176,20 @@ public class ResiReceivableServiceImpl extends ServiceImpl<ResiReceivableMapper,
         }
         return results;
     }
+
+    @Override
+    public boolean removeByIds(java.util.Collection<? extends java.io.Serializable> idList) {
+        Date now = new Date();
+        String userId = String.valueOf(SecurityUtils.getUserId());
+        for (java.io.Serializable id : idList) {
+            ResiReceivable entity = new ResiReceivable();
+            entity.setId((String) id);
+            entity.setDeleteTime(now);
+            entity.setDeleteUserId(userId);
+            entity.setLastModifyTime(now);
+            entity.setLastModifyUserId(userId);
+            baseMapper.updateById(entity);
+        }
+        return true;
+    }
 }
