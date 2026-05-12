@@ -1,0 +1,276 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.zhaoxinms.resi.report.mapper.ResiReportMapper">
+
+    <!-- ==================== 交易汇总 - 按支付方式 ==================== -->
+    <select id="selectTransactionSummaryByPayMethod" parameterType="com.zhaoxinms.resi.report.dto.ResiTransactionSummaryQuery"
+            resultType="com.zhaoxinms.resi.report.dto.ResiTransactionSummaryVo">
+        SELECT
+            pay_method AS groupKey,
+            COUNT(*) AS transactionCount,
+            SUM(total_amount) AS totalAmount,
+            SUM(discount_amount) AS discountAmount,
+            SUM(overdue_amount) AS overdueAmount,
+            SUM(pre_pay_amount) AS prePayAmount,
+            SUM(pay_amount) AS payAmount
+        FROM resi_pay_log
+        WHERE pay_type = 'COLLECT'
+        <if test="projectId != null">
+            AND project_id = #{projectId}
+        </if>
+        <if test="beginDate != null and beginDate != ''">
+            AND creator_time &gt;= CONCAT(#{beginDate}, ' 00:00:00')
+        </if>
+        <if test="endDate != null and endDate != ''">
+            AND creator_time &lt;= CONCAT(#{endDate}, ' 23:59:59')
+        </if>
+        <!-- 项目权限隔离：AOP 注入 projectIds -->
+        <if test="projectIds != null and projectIds.size() > 0">
+            AND project_id IN
+            <foreach collection="projectIds" item="pid" open="(" separator="," close=")">
+                #{pid}
+            </foreach>
+        </if>
+        GROUP BY pay_method
+        ORDER BY SUM(pay_amount) DESC
+    </select>
+
+    <!-- ==================== 交易汇总 - 按费用名称 ==================== -->
+    <select id="selectTransactionSummaryByFeeName" parameterType="com.zhaoxinms.resi.report.dto.ResiTransactionSummaryQuery"
+            resultType="com.zhaoxinms.resi.report.dto.ResiTransactionSummaryVo">
+        SELECT
+            fee_name AS groupKey,
+            COUNT(*) AS transactionCount,
+            SUM(receivable) AS totalAmount,
+            SUM(discount_amount) AS discountAmount,
+            SUM(overdue_fee) AS overdueAmount,
+            0 AS prePayAmount,
+            SUM(paid_amount) AS payAmount
+        FROM resi_receivable
+        WHERE delete_time IS NULL
+          AND pay_state = '2'
+        <if test="projectId != null">
+            AND project_id = #{projectId}
+        </if>
+        <!-- 项目权限隔离：AOP 注入 projectIds -->
+        <if test="projectIds != null and projectIds.size() > 0">
+            AND project_id IN
+            <foreach collection="projectIds" item="pid" open="(" separator="," close=")">
+                #{pid}
+            </foreach>
+        </if>
+        GROUP BY fee_name
+        ORDER BY SUM(paid_amount) DESC
+    </select>
+
+    <!-- ==================== 交易明细 ==================== -->
+    <select id="selectTransactionDetail" parameterType="com.zhaoxinms.resi.report.dto.ResiTransactionDetailQuery"
+            resultType="com.zhaoxinms.resi.report.dto.ResiTransactionDetailVo">
+        SELECT
+            r.id,
+            p.id AS payLogId,
+            p.pay_no,
+            r.resource_name,
+            r.customer_name,
+            r.fee_name,
+            r.bill_period,
+            p.pay_type,
+            p.pay_method,
+            p.total_amount,
+            p.discount_amount,
+            p.overdue_amount,
+            p.pre_pay_amount,
+            p.pay_amount,
+            p.creator_time AS payTime,
+            p.note
+        FROM resi_receivable r
+        LEFT JOIN resi_pay_log p ON r.pay_log_id = p.id
+        WHERE r.delete_time IS NULL
+        <if test="projectId != null">
+            AND r.project_id = #{projectId}
+        </if>
+        <if test="resourceName != null and resourceName != ''">
+            AND r.resource_name LIKE CONCAT('%', #{resourceName}, '%')
+        </if>
+        <if test="customerName != null and customerName != ''">
+            AND r.customer_name LIKE CONCAT('%', #{customerName}, '%')
+        </if>
+        <if test="feeName != null and feeName != ''">
+            AND r.fee_name LIKE CONCAT('%', #{feeName}, '%')
+        </if>
+        <if test="payMethod != null and payMethod != ''">
+            AND p.pay_method = #{payMethod}
+        </if>
+        <if test="payType != null and payType != ''">
+            AND p.pay_type = #{payType}
+        </if>
+        <if test="payNo != null and payNo != ''">
+            AND p.pay_no LIKE CONCAT('%', #{payNo}, '%')
+        </if>
+        <if test="beginDate != null and beginDate != ''">
+            AND p.creator_time &gt;= CONCAT(#{beginDate}, ' 00:00:00')
+        </if>
+        <if test="endDate != null and endDate != ''">
+            AND p.creator_time &lt;= CONCAT(#{endDate}, ' 23:59:59')
+        </if>
+        <!-- 项目权限隔离：AOP 注入 projectIds -->
+        <if test="projectIds != null and projectIds.size() > 0">
+            AND r.project_id IN
+            <foreach collection="projectIds" item="pid" open="(" separator="," close=")">
+                #{pid}
+            </foreach>
+        </if>
+        ORDER BY p.creator_time DESC, r.creator_time DESC
+    </select>
+
+    <!-- ==================== 收费率报表 ==================== -->
+    <select id="selectCollectionRate" parameterType="com.zhaoxinms.resi.report.dto.ResiCollectionRateQuery"
+            resultType="com.zhaoxinms.resi.report.dto.ResiCollectionRateVo">
+        SELECT
+            bill_period,
+            fee_name,
+            COUNT(*) AS totalCount,
+            SUM(receivable) AS receivableAmount,
+            SUM(paid_amount) AS paidAmount,
+            ROUND(IFNULL(SUM(paid_amount) / NULLIF(SUM(receivable), 0), 0) * 100, 2) AS collectionRate,
+            SUM(receivable - paid_amount) AS unpaidAmount
+        FROM resi_receivable
+        WHERE delete_time IS NULL
+        <if test="projectId != null">
+            AND project_id = #{projectId}
+        </if>
+        <if test="feeId != null and feeId != ''">
+            AND fee_id = #{feeId}
+        </if>
+        <if test="year != null and year != ''">
+            AND bill_period LIKE CONCAT(#{year}, '%')
+        </if>
+        <if test="beginPeriod != null and beginPeriod != ''">
+            AND bill_period &gt;= #{beginPeriod}
+        </if>
+        <if test="endPeriod != null and endPeriod != ''">
+            AND bill_period &lt;= #{endPeriod}
+        </if>
+        <!-- 项目权限隔离：AOP 注入 projectIds -->
+        <if test="projectIds != null and projectIds.size() > 0">
+            AND project_id IN
+            <foreach collection="projectIds" item="pid" open="(" separator="," close=")">
+                #{pid}
+            </foreach>
+        </if>
+        GROUP BY bill_period, fee_name
+        ORDER BY bill_period DESC, fee_name
+    </select>
+
+    <!-- ==================== 欠费明细 ==================== -->
+    <select id="selectArrearsDetail" parameterType="com.zhaoxinms.resi.report.dto.ResiArrearsDetailQuery"
+            resultType="com.zhaoxinms.resi.report.dto.ResiArrearsDetailVo">
+        SELECT
+            id,
+            resource_name,
+            customer_name,
+            fee_name,
+            fee_type,
+            bill_period,
+            num,
+            price,
+            total,
+            overdue_fee,
+            discount_amount,
+            receivable,
+            paid_amount,
+            (receivable - paid_amount) AS arrearsAmount,
+            remark
+        FROM resi_receivable
+        WHERE delete_time IS NULL
+          AND pay_state = '0'
+        <if test="projectId != null">
+            AND project_id = #{projectId}
+        </if>
+        <if test="buildingId != null">
+            AND resource_id IN (
+                SELECT id FROM resi_room WHERE building_id = #{buildingId}
+            )
+        </if>
+        <if test="resourceName != null and resourceName != ''">
+            AND resource_name LIKE CONCAT('%', #{resourceName}, '%')
+        </if>
+        <if test="customerName != null and customerName != ''">
+            AND customer_name LIKE CONCAT('%', #{customerName}, '%')
+        </if>
+        <if test="feeId != null and feeId != ''">
+            AND fee_id = #{feeId}
+        </if>
+        <if test="billPeriod != null and billPeriod != ''">
+            AND bill_period = #{billPeriod}
+        </if>
+        <if test="feeType != null and feeType != ''">
+            AND fee_type = #{feeType}
+        </if>
+        <!-- 项目权限隔离：AOP 注入 projectIds -->
+        <if test="projectIds != null and projectIds.size() > 0">
+            AND project_id IN
+            <foreach collection="projectIds" item="pid" open="(" separator="," close=")">
+                #{pid}
+            </foreach>
+        </if>
+        ORDER BY bill_period ASC, resource_name
+    </select>
+
+    <!-- ==================== 应收管理 ==================== -->
+    <select id="selectReceivableMgmt" parameterType="com.zhaoxinms.resi.report.dto.ResiReceivableMgmtQuery"
+            resultType="com.zhaoxinms.resi.report.dto.ResiReceivableMgmtVo">
+        SELECT
+            id,
+            resource_name,
+            customer_name,
+            fee_name,
+            fee_type,
+            bill_period,
+            num,
+            price,
+            total,
+            overdue_fee,
+            discount_amount,
+            receivable,
+            pay_state,
+            paid_amount,
+            pay_time,
+            gen_batch,
+            remark
+        FROM resi_receivable
+        WHERE delete_time IS NULL
+        <if test="projectId != null">
+            AND project_id = #{projectId}
+        </if>
+        <if test="billPeriod != null and billPeriod != ''">
+            AND bill_period = #{billPeriod}
+        </if>
+        <if test="feeId != null and feeId != ''">
+            AND fee_id = #{feeId}
+        </if>
+        <if test="payState != null and payState != ''">
+            AND pay_state = #{payState}
+        </if>
+        <if test="resourceName != null and resourceName != ''">
+            AND resource_name LIKE CONCAT('%', #{resourceName}, '%')
+        </if>
+        <if test="customerName != null and customerName != ''">
+            AND customer_name LIKE CONCAT('%', #{customerName}, '%')
+        </if>
+        <if test="feeType != null and feeType != ''">
+            AND fee_type = #{feeType}
+        </if>
+        <!-- 项目权限隔离：AOP 注入 projectIds -->
+        <if test="projectIds != null and projectIds.size() > 0">
+            AND project_id IN
+            <foreach collection="projectIds" item="pid" open="(" separator="," close=")">
+                #{pid}
+            </foreach>
+        </if>
+        ORDER BY creator_time DESC
+    </select>
+
+</mapper>

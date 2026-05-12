@@ -173,7 +173,7 @@ export function exportReport(url, query, fileName) {
     params: { ...query, export: true },
     responseType: 'blob'
   }).then(response => {
-    const blob = new Blob([response.data])
+    const blob = new Blob([response])
     const link = document.createElement('a')
     link.href = URL.createObjectURL(blob)
     link.download = fileName + '.xlsx'
