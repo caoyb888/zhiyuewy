@@ -22,7 +22,6 @@
             :props="treeProps"
             node-key="id"
             highlight-current
-            lazy
             @node-click="handleNodeClick"
             class="room-tree"
           />
@@ -38,7 +37,8 @@
               style="float: right; padding: 3px 0"
               type="text"
               icon="el-icon-refresh"
-              @click="loadReceivables"
+              :disabled="!currentRoomId"
+              @click="loadReceivables(currentRoomId)"
             >刷新</el-button>
           </div>
           <el-table
@@ -116,6 +116,7 @@
 
 <script>
 import { formatMoney, payStateLabel, payStateTagType } from '@/utils/resi'
+import { searchRoom, getRoomReceivables, getRoomSummary } from '@/api/resi/cashier'
 
 export default {
   name: 'ResiCashier',
@@ -135,6 +136,7 @@ export default {
       },
       receivableList: [],
       selectedIds: [],
+      currentRoomId: null,
       totalReceivable: 0,
       totalDiscount: 0,
       totalPay: 0,
@@ -145,36 +147,108 @@ export default {
     }
   },
   created() {
-    // TODO: 加载项目-楼栋树
+    // 初始状态：树为空，等待用户搜索
   },
   methods: {
     payStateLabel,
     payStateTagType,
+    // 搜索房间
     handleSearch() {
-      // TODO: 搜索房间
+      const keyword = this.searchKeyword.trim()
+      if (!keyword) {
+        this.roomTree = []
+        return
+      }
+      this.treeLoading = true
+      searchRoom(keyword).then(response => {
+        const rooms = response.data || []
+        this.roomTree = this.buildRoomTree(rooms)
+        this.treeLoading = false
+      }).catch(() => {
+        this.treeLoading = false
+      })
+    },
+    // 将房间列表按项目+楼栋分组，组装为树形结构
+    buildRoomTree(rooms) {
+      const projectMap = {}
+      rooms.forEach(room => {
+        const projectKey = room.projectId || 0
+        const buildingKey = room.buildingId || 0
+        if (!projectMap[projectKey]) {
+          projectMap[projectKey] = {
+            id: 'project_' + projectKey,
+            label: room.projectName || '未知项目',
+            type: 'project',
+            children: {}
+          }
+        }
+        const projectNode = projectMap[projectKey]
+        if (!projectNode.children[buildingKey]) {
+          projectNode.children[buildingKey] = {
+            id: 'building_' + buildingKey,
+            label: room.buildingName || '未知楼栋',
+            type: 'building',
+            children: []
+          }
+        }
+        const buildingNode = projectNode.children[buildingKey]
+        buildingNode.children.push({
+          id: room.id,
+          label: (room.roomAlias || room.roomNo || room.id) + (room.customerName ? ' (' + room.customerName + ')' : ''),
+          type: 'room',
+          isLeaf: true,
+          roomId: room.id
+        })
+      })
+      // 转换为数组结构
+      return Object.values(projectMap).map(project => {
+        project.children = Object.values(project.children)
+        return project
+      })
     },
     handleNodeClick(data) {
       if (data.type === 'room') {
-        this.loadReceivables(data.id)
+        this.currentRoomId = data.roomId
+        this.loadReceivables(data.roomId)
       }
     },
     loadReceivables(roomId) {
       this.loading = true
-      // TODO: 调用 /resi/cashier/room/{roomId}/receivables
-      setTimeout(() => {
+      this.receivableList = []
+      this.selectedIds = []
+      this.resetSummary()
+      getRoomReceivables(roomId).then(response => {
+        this.receivableList = response.data || []
         this.loading = false
-      }, 300)
+      }).catch(() => {
+        this.loading = false
+      })
     },
     handleSelectionChange(selection) {
       this.selectedIds = selection.map(item => item.id)
-      // TODO: 调用 /resi/cashier/calc 计算金额
+      // S4-03 阶段本地计算，S4-04 接入 calc 接口
+      let totalReceivable = 0
+      let totalDiscount = 0
+      selection.forEach(item => {
+        totalReceivable += Number(item.receivable || 0)
+        totalDiscount += Number(item.discountAmount || 0)
+      })
+      this.totalReceivable = totalReceivable
+      this.totalDiscount = totalDiscount
+      this.totalPay = totalReceivable - totalDiscount
+      this.payForm.payAmount = Number(this.totalPay.toFixed(2))
+    },
+    resetSummary() {
+      this.totalReceivable = 0
+      this.totalDiscount = 0
+      this.totalPay = 0
+      this.payForm.payAmount = 0
     },
     async handleCollect() {
       this.loading = true
       try {
-        // TODO: 调用 /resi/cashier/collect
-        this.$message.success('收款成功')
-        this.loadReceivables()
+        // S4-04 实现收款核心接口
+        this.$message.warning('收款功能将在 S4-04 阶段实现')
       } finally {
         this.loading = false
       }
