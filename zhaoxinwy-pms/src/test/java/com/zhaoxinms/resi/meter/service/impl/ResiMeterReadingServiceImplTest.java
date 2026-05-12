@@ -25,9 +25,12 @@ import com.zhaoxinms.resi.archive.entity.ResiMeterDevice;
 import com.zhaoxinms.resi.archive.entity.ResiRoom;
 import com.zhaoxinms.resi.archive.service.IResiMeterDeviceService;
 import com.zhaoxinms.resi.archive.service.IResiRoomService;
+import com.zhaoxinms.resi.common.ResiConstants;
 import com.zhaoxinms.resi.meter.dto.ResiMeterShareCalcReq;
 import com.zhaoxinms.resi.meter.dto.ResiMeterShareCalcResultVo;
 import com.zhaoxinms.resi.meter.dto.ResiMeterShareDetailVo;
+import com.zhaoxinms.resi.receivable.entity.ResiReceivable;
+import com.zhaoxinms.resi.receivable.service.IResiReceivableService;
 import com.zhaoxinms.resi.meter.entity.ResiMeterReading;
 import com.zhaoxinms.resi.meter.mapper.ResiMeterReadingMapper;
 
@@ -46,6 +49,9 @@ class ResiMeterReadingServiceImplTest {
 
     @Mock
     private IResiRoomService roomService;
+
+    @Mock
+    private IResiReceivableService receivableService;
 
     @InjectMocks
     private ResiMeterReadingServiceImpl meterReadingService;
@@ -253,6 +259,193 @@ class ResiMeterReadingServiceImplTest {
         return reading;
     }
 
+    // ==================== S3-06 测试：入账与预警 ====================
+
+    @Test
+    @DisplayName("TC-METER-001-05：读数回退场景，允许保存（预警但不阻止）")
+    void save_readingRollback_allowedButWarn() {
+        when(meterReadingMapper.insert(any(ResiMeterReading.class))).thenReturn(1);
+
+        ResiMeterDevice device = new ResiMeterDevice();
+        device.setId(1L);
+        device.setMultiplier(new BigDecimal("1.00"));
+        when(meterDeviceService.getById(1L)).thenReturn(device);
+
+        ResiMeterReading reading = buildValidReading();
+        reading.setLastReading(new BigDecimal("200.0000"));
+        reading.setCurrReading(new BigDecimal("150.0000")); // 读数回退：150 < 200
+
+        boolean success = meterReadingService.save(reading);
+
+        assertTrue(success);
+        assertEquals(new BigDecimal("-50.0000"), reading.getRawUsage()); // (150-200)*1 = -50
+        assertTrue(reading.getRawUsage().compareTo(BigDecimal.ZERO) < 0, "原始用量应为负数，触发预警条件");
+    }
+
+    @Test
+    @DisplayName("TC-CASH-001-01等：单户入账成功，状态变为BILLED并生成应收")
+    void bill_success() {
+        ResiMeterReading reading = buildValidReading();
+        reading.setId("reading-001");
+        reading.setStatus(ResiConstants.METER_STATUS_INPUT);
+        reading.setFeeId("fee-001");
+        when(meterReadingMapper.selectById("reading-001")).thenReturn(reading);
+
+        ResiReceivable receivable = new ResiReceivable();
+        receivable.setId("recv-001");
+        when(receivableService.createFromMeterReading(any(ResiMeterReading.class)))
+            .thenReturn(receivable);
+
+        when(meterReadingMapper.updateById(any(ResiMeterReading.class))).thenReturn(1);
+
+        Map<String, Object> result = meterReadingService.bill("reading-001");
+
+        assertEquals(true, result.get("success"));
+        assertEquals("recv-001", result.get("receivableId"));
+        // 验证状态更新为BILLED
+        verify(meterReadingMapper).updateById(argThat(r ->
+            ResiConstants.METER_STATUS_BILLED.equals(((ResiMeterReading) r).getStatus())
+        ));
+    }
+
+    @Test
+    @DisplayName("TC-METER-003-05：单户入账幂等，已入账记录再次入账应失败")
+    void bill_alreadyBilled_rejected() {
+        ResiMeterReading reading = buildValidReading();
+        reading.setId("reading-001");
+        reading.setStatus(ResiConstants.METER_STATUS_BILLED);
+        when(meterReadingMapper.selectById("reading-001")).thenReturn(reading);
+
+        Map<String, Object> result = meterReadingService.bill("reading-001");
+
+        assertEquals(false, result.get("success"));
+        assertTrue(((String) result.get("message")).contains("已入账"));
+        verify(receivableService, never()).createFromMeterReading(any());
+    }
+
+    @Test
+    @DisplayName("单户入账：已复核记录不可入账")
+    void bill_alreadyVerified_rejected() {
+        ResiMeterReading reading = buildValidReading();
+        reading.setId("reading-001");
+        reading.setStatus(ResiConstants.METER_STATUS_VERIFIED);
+        when(meterReadingMapper.selectById("reading-001")).thenReturn(reading);
+
+        Map<String, Object> result = meterReadingService.bill("reading-001");
+
+        assertEquals(false, result.get("success"));
+        assertTrue(((String) result.get("message")).contains("已复核"));
+        verify(receivableService, never()).createFromMeterReading(any());
+    }
+
+    @Test
+    @DisplayName("TC-METER-003：批量入账成功，生成对应应收记录")
+    void batchBill_success() {
+        ResiMeterReading r1 = buildValidReading();
+        r1.setId("r-001");
+        r1.setStatus(ResiConstants.METER_STATUS_INPUT);
+        r1.setFeeId("fee-001");
+
+        ResiMeterReading r2 = buildValidReading();
+        r2.setId("r-002");
+        r2.setStatus(ResiConstants.METER_STATUS_INPUT);
+        r2.setFeeId("fee-001");
+
+        List<ResiMeterReading> readings = Arrays.asList(r1, r2);
+        when(meterReadingMapper.selectList(any(QueryWrapper.class))).thenReturn(readings);
+
+        ResiReceivable recv1 = new ResiReceivable();
+        recv1.setId("recv-001");
+        ResiReceivable recv2 = new ResiReceivable();
+        recv2.setId("recv-002");
+        when(receivableService.createFromMeterReading(r1)).thenReturn(recv1);
+        when(receivableService.createFromMeterReading(r2)).thenReturn(recv2);
+
+        when(meterReadingMapper.updateById(any(ResiMeterReading.class))).thenReturn(1);
+
+        Map<String, Object> result = meterReadingService.batchBill(1L, "2026-05", null);
+
+        assertEquals(2, result.get("total"));
+        assertEquals(2, result.get("success"));
+        assertEquals(0, result.get("skip"));
+        assertEquals(0, result.get("fail"));
+        verify(receivableService, times(2)).createFromMeterReading(any());
+    }
+
+    @Test
+    @DisplayName("TC-METER-003-05：二次批量入账幂等，已入账记录被跳过不产生重复应收")
+    void batchBill_idempotent_secondCall_skipAlreadyBilled() {
+        // 第一次批量入账后，记录状态变为 BILLED
+        ResiMeterReading r1 = buildValidReading();
+        r1.setId("r-001");
+        r1.setStatus(ResiConstants.METER_STATUS_BILLED); // 已入账
+        r1.setReceivableId("recv-001");
+        r1.setFeeId("fee-001");
+
+        ResiMeterReading r2 = buildValidReading();
+        r2.setId("r-002");
+        r2.setStatus(ResiConstants.METER_STATUS_INPUT); // 未入账
+        r2.setFeeId("fee-001");
+
+        List<ResiMeterReading> readings = Arrays.asList(r1, r2);
+        when(meterReadingMapper.selectList(any(QueryWrapper.class))).thenReturn(readings);
+
+        ResiReceivable recv2 = new ResiReceivable();
+        recv2.setId("recv-002");
+        when(receivableService.createFromMeterReading(r2)).thenReturn(recv2);
+        when(meterReadingMapper.updateById(any(ResiMeterReading.class))).thenReturn(1);
+
+        // 第二次批量入账
+        Map<String, Object> result = meterReadingService.batchBill(1L, "2026-05", null);
+
+        assertEquals(2, result.get("total"));
+        assertEquals(1, result.get("success")); // 只有r2成功
+        assertEquals(1, result.get("skip"));    // r1已入账被跳过
+        assertEquals(0, result.get("fail"));
+        // 验证只调用了一次createFromMeterReading（仅对r2）
+        verify(receivableService, times(1)).createFromMeterReading(any());
+    }
+
+    @Test
+    @DisplayName("TC-METER-002-01~05：公摊计算6:4分摊，误差<0.01")
+    void previewShare_areaRatio6to4_errorLessThan001() {
+        // 总表100度，分户A=40度(60㎡)，分户B=30度(40㎡)，公摊=30度
+        List<ResiMeterReading> readings = Arrays.asList(
+            buildShareReading("R-Total", 0L, null, 100, 1),
+            buildShareReading("R-A", 1L, "A", 40, 0),
+            buildShareReading("R-B", 2L, "B", 30, 0)
+        );
+        when(meterReadingMapper.selectAllShareGroupReadings(1L, "2026-05"))
+            .thenReturn(readings);
+
+        when(roomService.getById(1L)).thenReturn(buildRoom("A", new BigDecimal("60.00")));
+        when(roomService.getById(2L)).thenReturn(buildRoom("B", new BigDecimal("40.00")));
+
+        ResiMeterShareCalcReq req = new ResiMeterShareCalcReq();
+        req.setProjectId(1L);
+        req.setPeriod("2026-05");
+
+        List<ResiMeterShareCalcResultVo> results = meterReadingService.previewShare(req);
+
+        assertEquals(1, results.size());
+        ResiMeterShareCalcResultVo result = results.get(0);
+        assertEquals(new BigDecimal("30.0000"), result.getShareTotal());
+
+        ResiMeterShareDetailVo dA = result.getDetails().get(0);
+        ResiMeterShareDetailVo dB = result.getDetails().get(1);
+
+        // A 分摊：30 × 60/100 = 18.00
+        assertEquals(new BigDecimal("18.0000"), dA.getShareAmount());
+        // B 分摊：30 - 18.00 = 12.00（差额调整）
+        assertEquals(new BigDecimal("12.0000"), dB.getShareAmount());
+
+        // 守恒验证
+        BigDecimal sum = dA.getShareAmount().add(dB.getShareAmount());
+        BigDecimal diff = sum.subtract(new BigDecimal("30.0000")).abs();
+        assertTrue(diff.compareTo(new BigDecimal("0.0100")) < 0,
+            "误差应小于0.01，实际：" + diff);
+    }
+
     // ==================== 公摊计算测试 ====================
 
     @Test
@@ -384,47 +577,6 @@ class ResiMeterReadingServiceImplTest {
 
         assertEquals(0, results.get(0).getShareTotal().compareTo(BigDecimal.ZERO));
         assertEquals(0, results.get(0).getDetails().get(0).getShareAmount().compareTo(BigDecimal.ZERO));
-    }
-
-    @Test
-    @DisplayName("公摊计算：按面积比6:4分摊，误差<0.01")
-    void previewShare_areaRatio6to4_errorLessThan001() {
-        // 总表100度，分户A=40度(60㎡)，分户B=30度(40㎡)，公摊=30度
-        List<ResiMeterReading> readings = Arrays.asList(
-            buildShareReading("R-Total", 0L, null, 100, 1),
-            buildShareReading("R-A", 1L, "A", 40, 0),
-            buildShareReading("R-B", 2L, "B", 30, 0)
-        );
-        when(meterReadingMapper.selectAllShareGroupReadings(1L, "2026-05"))
-            .thenReturn(readings);
-
-        when(roomService.getById(1L)).thenReturn(buildRoom("A", new BigDecimal("60.00")));
-        when(roomService.getById(2L)).thenReturn(buildRoom("B", new BigDecimal("40.00")));
-
-        ResiMeterShareCalcReq req = new ResiMeterShareCalcReq();
-        req.setProjectId(1L);
-        req.setPeriod("2026-05");
-        // publicGroup 为空，触发 selectAllShareGroupReadings
-
-        List<ResiMeterShareCalcResultVo> results = meterReadingService.previewShare(req);
-
-        assertEquals(1, results.size());
-        ResiMeterShareCalcResultVo result = results.get(0);
-        assertEquals(new BigDecimal("30.0000"), result.getShareTotal());
-
-        ResiMeterShareDetailVo dA = result.getDetails().get(0);
-        ResiMeterShareDetailVo dB = result.getDetails().get(1);
-
-        // A 分摊：30 × 60/100 = 18.00
-        assertEquals(new BigDecimal("18.0000"), dA.getShareAmount());
-        // B 分摊：30 - 18.00 = 12.00（差额调整）
-        assertEquals(new BigDecimal("12.0000"), dB.getShareAmount());
-
-        // 守恒验证
-        BigDecimal sum = dA.getShareAmount().add(dB.getShareAmount());
-        BigDecimal diff = sum.subtract(new BigDecimal("30.0000")).abs();
-        assertTrue(diff.compareTo(new BigDecimal("0.0100")) < 0,
-            "误差应小于0.01，实际：" + diff);
     }
 
     @Test
