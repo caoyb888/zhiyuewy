@@ -65,6 +65,13 @@ export function collectPayment(data) {
   })
 }
 
+export function getReceiptPrintData(payLogId) {
+  return request({
+    url: '/resi/print/receipt/' + payLogId,
+    method: 'get'
+  })
+}
+
 export function refundPayment(data) {
   return request({
     url: '/resi/cashier/refund',
