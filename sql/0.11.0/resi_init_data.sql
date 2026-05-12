@@ -243,7 +243,9 @@ INSERT INTO `sys_menu` (`menu_id`, `menu_name`, `parent_id`, `order_num`, `path`
 (5302, '抄表录入', 4300, 2, '', NULL, 'F', '0', '0', 'resi:meter:add', '#', 'admin', NOW()),
 (5303, '抄表修改', 4300, 3, '', NULL, 'F', '0', '0', 'resi:meter:edit', '#', 'admin', NOW()),
 (5304, '抄表删除', 4300, 4, '', NULL, 'F', '0', '0', 'resi:meter:remove', '#', 'admin', NOW()),
-(5305, '抄表导出', 4300, 5, '', NULL, 'F', '0', '0', 'resi:meter:export', '#', 'admin', NOW());
+(5305, '抄表导出', 4300, 5, '', NULL, 'F', '0', '0', 'resi:meter:export', '#', 'admin', NOW()),
+(5306, '抄表入账', 4300, 6, '', NULL, 'F', '0', '0', 'resi:meter:bill', '#', 'admin', NOW()),
+(5307, '抄表公摊计算', 4300, 7, '', NULL, 'F', '0', '0', 'resi:meter:share', '#', 'admin', NOW());
 
 -- 应收管理按钮权限
 INSERT INTO `sys_menu` (`menu_id`, `menu_name`, `parent_id`, `order_num`, `path`, `component`, `menu_type`, `visible`, `status`, `perms`, `icon`, `create_by`, `create_time`) VALUES

@@ -4,6 +4,7 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.util.ArrayList;
 import java.util.Date;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -21,12 +22,15 @@ import com.zhaoxinms.resi.archive.entity.ResiMeterDevice;
 import com.zhaoxinms.resi.archive.entity.ResiRoom;
 import com.zhaoxinms.resi.archive.service.IResiMeterDeviceService;
 import com.zhaoxinms.resi.archive.service.IResiRoomService;
+import com.zhaoxinms.resi.common.ResiConstants;
 import com.zhaoxinms.resi.meter.dto.ResiMeterShareCalcReq;
 import com.zhaoxinms.resi.meter.dto.ResiMeterShareCalcResultVo;
 import com.zhaoxinms.resi.meter.dto.ResiMeterShareDetailVo;
 import com.zhaoxinms.resi.meter.entity.ResiMeterReading;
 import com.zhaoxinms.resi.meter.mapper.ResiMeterReadingMapper;
 import com.zhaoxinms.resi.meter.service.IResiMeterReadingService;
+import com.zhaoxinms.resi.receivable.entity.ResiReceivable;
+import com.zhaoxinms.resi.receivable.service.IResiReceivableService;
 
 /**
  * 抄表记录 Service实现
@@ -42,6 +46,9 @@ public class ResiMeterReadingServiceImpl extends ServiceImpl<ResiMeterReadingMap
 
     @Autowired
     private IResiRoomService roomService;
+
+    @Autowired
+    private IResiReceivableService receivableService;
 
     @Override
     public List<ResiMeterReading> selectResiMeterReadingList(ResiMeterReading reading) {
@@ -357,6 +364,124 @@ public class ResiMeterReadingServiceImpl extends ServiceImpl<ResiMeterReadingMap
         }
 
         result.setDetails(details);
+        return result;
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public Map<String, Object> bill(String id) {
+        Map<String, Object> result = new HashMap<>();
+        ResiMeterReading reading = getById(id);
+        if (reading == null) {
+            result.put("success", false);
+            result.put("message", "抄表记录不存在");
+            return result;
+        }
+
+        if (ResiConstants.METER_STATUS_BILLED.equals(reading.getStatus())) {
+            result.put("success", false);
+            result.put("message", "该抄表记录已入账，请勿重复操作");
+            return result;
+        }
+
+        if (ResiConstants.METER_STATUS_VERIFIED.equals(reading.getStatus())) {
+            result.put("success", false);
+            result.put("message", "已复核的抄表记录不可入账");
+            return result;
+        }
+
+        // 生成应收账单
+        ResiReceivable receivable = receivableService.createFromMeterReading(reading);
+        if (receivable == null) {
+            result.put("success", false);
+            result.put("message", "生成应收账单失败，请检查费用配置");
+            return result;
+        }
+
+        // 更新抄表记录状态
+        ResiMeterReading update = new ResiMeterReading();
+        update.setId(id);
+        update.setStatus(ResiConstants.METER_STATUS_BILLED);
+        update.setReceivableId(receivable.getId());
+        update.setLastModifyTime(new Date());
+        update.setLastModifyUserId(String.valueOf(SecurityUtils.getUserId()));
+        baseMapper.updateById(update);
+
+        result.put("success", true);
+        result.put("receivableId", receivable.getId());
+        result.put("message", "入账成功");
+        return result;
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public Map<String, Object> batchBill(Long projectId, String period, List<String> ids) {
+        Map<String, Object> result = new HashMap<>();
+
+        // 查询待入账的抄表记录
+        List<ResiMeterReading> readings;
+        if (ids != null && !ids.isEmpty()) {
+            readings = baseMapper.selectBatchIds(ids);
+            // 过滤出符合项目ID和期间的记录
+            readings.removeIf(r -> !r.getProjectId().equals(projectId)
+                    || !period.equals(r.getPeriod())
+                    || !ResiConstants.METER_STATUS_INPUT.equals(r.getStatus()));
+        } else {
+            QueryWrapper<ResiMeterReading> qw = new QueryWrapper<>();
+            qw.eq("project_id", projectId)
+              .eq("period", period)
+              .eq("status", ResiConstants.METER_STATUS_INPUT);
+            readings = baseMapper.selectList(qw);
+        }
+
+        int total = readings.size();
+        int success = 0;
+        int skip = 0;
+        int fail = 0;
+        List<String> messages = new ArrayList<>();
+
+        for (ResiMeterReading reading : readings) {
+            try {
+                // 跳过已入账或已复核的
+                if (ResiConstants.METER_STATUS_BILLED.equals(reading.getStatus())
+                        || ResiConstants.METER_STATUS_VERIFIED.equals(reading.getStatus())) {
+                    skip++;
+                    continue;
+                }
+
+                // 跳过未关联费用定义的
+                if (StringUtils.isBlank(reading.getFeeId())) {
+                    skip++;
+                    messages.add("抄表记录【" + reading.getMeterCode() + "】未关联费用定义，跳过");
+                    continue;
+                }
+
+                ResiReceivable receivable = receivableService.createFromMeterReading(reading);
+                if (receivable != null) {
+                    // 更新抄表记录状态
+                    ResiMeterReading update = new ResiMeterReading();
+                    update.setId(reading.getId());
+                    update.setStatus(ResiConstants.METER_STATUS_BILLED);
+                    update.setReceivableId(receivable.getId());
+                    update.setLastModifyTime(new Date());
+                    update.setLastModifyUserId(String.valueOf(SecurityUtils.getUserId()));
+                    baseMapper.updateById(update);
+                    success++;
+                } else {
+                    fail++;
+                    messages.add("抄表记录【" + reading.getMeterCode() + "】生成应收失败");
+                }
+            } catch (Exception e) {
+                fail++;
+                messages.add("抄表记录【" + reading.getMeterCode() + "】入账异常：" + e.getMessage());
+            }
+        }
+
+        result.put("total", total);
+        result.put("success", success);
+        result.put("skip", skip);
+        result.put("fail", fail);
+        result.put("messages", messages);
         return result;
     }
 

@@ -24,6 +24,7 @@ import com.zhaoxinms.common.core.validate.EditGroup;
 import com.zhaoxinms.common.enums.BusinessType;
 import com.zhaoxinms.common.exception.ServiceException;
 import com.zhaoxinms.resi.common.annotation.ResiProjectScope;
+import com.zhaoxinms.resi.meter.dto.ResiMeterReadingBillBatchReq;
 import com.zhaoxinms.resi.meter.dto.ResiMeterShareCalcReq;
 import com.zhaoxinms.resi.meter.entity.ResiMeterReading;
 import com.zhaoxinms.resi.meter.service.IResiMeterReadingService;
@@ -143,5 +144,27 @@ public class ResiMeterReadingController extends BaseController {
     @GetMapping("/share-preview")
     public AjaxResult sharePreview(@Validated ResiMeterShareCalcReq req) {
         return AjaxResult.success(meterReadingService.previewShare(req));
+    }
+
+    /**
+     * 单户入账
+     */
+    @ApiOperation("单户入账")
+    @PreAuthorize("@ss.hasPermi('resi:meter:bill')")
+    @Log(title = "住宅收费-抄表管理-单户入账", businessType = BusinessType.UPDATE)
+    @PostMapping("/bill/{id}")
+    public AjaxResult bill(@PathVariable("id") String id) {
+        return AjaxResult.success(meterReadingService.bill(id));
+    }
+
+    /**
+     * 批量入账
+     */
+    @ApiOperation("批量入账")
+    @PreAuthorize("@ss.hasPermi('resi:meter:bill')")
+    @Log(title = "住宅收费-抄表管理-批量入账", businessType = BusinessType.UPDATE)
+    @PostMapping("/bill/batch")
+    public AjaxResult batchBill(@RequestBody @Validated ResiMeterReadingBillBatchReq req) {
+        return AjaxResult.success(meterReadingService.batchBill(req.getProjectId(), req.getPeriod(), req.getIds()));
     }
 }

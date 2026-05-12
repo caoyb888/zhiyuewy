@@ -64,6 +64,28 @@
           v-hasPermi="['resi:meter:remove']"
         >删除</el-button>
       </el-col>
+      <el-col :span="1.5">
+        <el-button
+          type="warning"
+          plain
+          icon="el-icon-s-order"
+          size="mini"
+          :disabled="single"
+          @click="handleBill"
+          v-hasPermi="['resi:meter:bill']"
+        >单户入账</el-button>
+      </el-col>
+      <el-col :span="1.5">
+        <el-button
+          type="warning"
+          plain
+          icon="el-icon-s-claim"
+          size="mini"
+          :disabled="multiple"
+          @click="handleBatchBill"
+          v-hasPermi="['resi:meter:bill']"
+        >批量入账</el-button>
+      </el-col>
       <right-toolbar :showSearch.sync="showSearch" @queryTable="getList"></right-toolbar>
     </el-row>
 
@@ -134,6 +156,15 @@
             v-hasPermi="['resi:meter:remove']"
             :disabled="scope.row.status !== 'INPUT'"
           >删除</el-button>
+          <el-button
+            size="mini"
+            type="text"
+            icon="el-icon-s-order"
+            @click="handleBillRow(scope.row)"
+            v-hasPermi="['resi:meter:bill']"
+            :disabled="scope.row.status !== 'INPUT'"
+            style="color: #e6a23c"
+          >入账</el-button>
         </template>
       </el-table-column>
     </el-table>
@@ -249,7 +280,7 @@
 </template>
 
 <script>
-import { listMeterReading, getMeterReading, addMeterReading, updateMeterReading, delMeterReading } from "@/api/resi/meter";
+import { listMeterReading, getMeterReading, addMeterReading, updateMeterReading, delMeterReading, billMeterReading, batchBillMeterReading } from "@/api/resi/meter";
 import { listProject } from "@/api/resi/archive";
 import { listMeterDevice } from "@/api/resi/archive";
 
@@ -480,6 +511,62 @@ export default {
         this.getList();
         this.$modal.msgSuccess("删除成功");
       }).catch(() => {});
+    },
+
+    /** 单户入账（工具栏） */
+    handleBill() {
+      const id = this.ids[0];
+      const row = this.readingList.find(item => item.id === id);
+      this.handleBillRow(row);
+    },
+
+    /** 单户入账（行内） */
+    handleBillRow(row) {
+      if (row.status !== 'INPUT') {
+        this.$modal.msgWarning("仅状态为【已录入】的记录可入账");
+        return;
+      }
+      this.$modal.confirm('确认对【' + row.meterCode + '】' + row.period + '的抄表记录进行入账？').then(() => {
+        return billMeterReading(row.id);
+      }).then(response => {
+        if (response.data && response.data.success) {
+          this.$modal.msgSuccess("入账成功");
+          this.getList();
+        } else {
+          this.$modal.msgError(response.data ? response.data.message : "入账失败");
+        }
+      }).catch(() => {});
+    },
+
+    /** 批量入账 */
+    handleBatchBill() {
+      if (!this.queryParams.projectId) {
+        this.$modal.msgWarning("请先选择项目");
+        return;
+      }
+      if (!this.queryParams.period) {
+        this.$modal.msgWarning("请先选择抄表期间");
+        return;
+      }
+      const selectedIds = this.ids;
+      const hint = selectedIds.length > 0
+        ? '确认对选中的 ' + selectedIds.length + ' 条记录进行批量入账？'
+        : '确认对当前筛选条件下所有【已录入】的抄表记录进行批量入账？';
+      this.$modal.confirm(hint).then(() => {
+        this.loading = true;
+        return batchBillMeterReading({
+          projectId: this.queryParams.projectId,
+          period: this.queryParams.period,
+          ids: selectedIds.length > 0 ? selectedIds : undefined
+        });
+      }).then(response => {
+        this.loading = false;
+        const data = response.data;
+        this.$modal.msgSuccess('批量入账完成：成功 ' + data.success + ' 条，跳过 ' + data.skip + ' 条，失败 ' + data.fail + ' 条');
+        this.getList();
+      }).catch(() => {
+        this.loading = false;
+      });
     }
   }
 };
