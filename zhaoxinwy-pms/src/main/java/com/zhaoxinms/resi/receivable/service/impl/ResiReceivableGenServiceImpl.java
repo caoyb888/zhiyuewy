@@ -284,21 +284,69 @@ public class ResiReceivableGenServiceImpl implements IResiReceivableGenService {
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void createTempReceivable(ResiReceivableCreateTempReq req) {
+        // 1. 校验费用定义
         ResiFeeDefinition feeDef = feeDefinitionService.getById(req.getFeeId());
         if (feeDef == null) {
             throw new ServiceException("费用定义不存在");
         }
+        if (!Integer.valueOf(1).equals(feeDef.getEnabledMark())) {
+            throw new ServiceException("费用定义已停用，无法录入");
+        }
+        // 项目数据隔离校验
+        if (!feeDef.getProjectId().equals(req.getProjectId())) {
+            throw new ServiceException("费用定义不属于所选项目");
+        }
 
         BigDecimal num = req.getNum();
         BigDecimal price = req.getPrice();
+        if (num == null || price == null) {
+            throw new ServiceException("数量和单价不能为空");
+        }
         BigDecimal total = num.multiply(price);
         total = total.setScale(2, RoundingMode.HALF_UP);
 
-        // 查询资源名称和客户
+        // 2. 查询资源信息（资源名称 + 当前绑定客户）
         String resourceName = null;
         Long customerId = null;
         String customerName = null;
+
         if (ResiConstants.RESOURCE_TYPE_ROOM.equals(req.getResourceType())) {
+            ResiRoom room = roomService.getById(req.getResourceId());
+            if (room == null) {
+                throw new ServiceException("所选房间不存在");
+            }
+            if (!room.getProjectId().equals(req.getProjectId())) {
+                throw new ServiceException("房间不属于所选项目");
+            }
+            resourceName = room.getRoomAlias();
+            List<ResiCustomerAsset> assets = customerAssetService.lambdaQuery()
+                    .eq(ResiCustomerAsset::getAssetType, ResiConstants.ASSET_TYPE_ROOM)
+                    .eq(ResiCustomerAsset::getAssetId, room.getId())
+                    .eq(ResiCustomerAsset::getIsCurrent, 1)
+                    .list();
+            if (assets != null && !assets.isEmpty()) {
+                customerId = assets.get(0).getCustomerId();
+                ResiCustomer customer = customerService.getById(customerId);
+                if (customer != null) {
+                    customerName = customer.getCustomerName();
+                }
+            }
+        } else if (ResiConstants.RESOURCE_TYPE_PARKING.equals(req.getResourceType())) {
+            // 车位资源：通过通用客户资产绑定查询
+            List<ResiCustomerAsset> assets = customerAssetService.lambdaQuery()
+                    .eq(ResiCustomerAsset::getAssetType, ResiConstants.ASSET_TYPE_PARKING)
+                    .eq(ResiCustomerAsset::getAssetId, req.getResourceId())
+                    .eq(ResiCustomerAsset::getIsCurrent, 1)
+                    .list();
+            if (assets != null && !assets.isEmpty()) {
+                customerId = assets.get(0).getCustomerId();
+                ResiCustomer customer = customerService.getById(customerId);
+                if (customer != null) {
+                    customerName = customer.getCustomerName();
+                }
+            }
+        } else if (ResiConstants.RESOURCE_TYPE_STORAGE.equals(req.getResourceType())) {
+            // 储藏室资源（按房间处理）
             ResiRoom room = roomService.getById(req.getResourceId());
             if (room != null) {
                 resourceName = room.getRoomAlias();
@@ -346,6 +394,8 @@ public class ResiReceivableGenServiceImpl implements IResiReceivableGenService {
         receivable.setLastModifyUserId(userId);
 
         receivableMapper.insert(receivable);
+        log.info("临时费录入成功 projectId={} resourceId={} feeId={} total={}",
+                req.getProjectId(), req.getResourceId(), feeDef.getId(), total);
     }
 
     /**

@@ -165,25 +165,26 @@
     <el-dialog title="临时费录入" :visible.sync="tempOpen" width="600px" append-to-body :close-on-click-modal="false">
       <el-form ref="tempForm" :model="tempParams" :rules="tempRules" label-width="100px">
         <el-form-item label="所属项目" prop="projectId">
-          <el-select v-model="tempParams.projectId" placeholder="请选择项目" style="width: 100%">
+          <el-select v-model="tempParams.projectId" placeholder="请选择项目" style="width: 100%" @change="onTempProjectChange">
             <el-option v-for="item in projectOptions" :key="item.id" :label="item.name" :value="item.id" />
           </el-select>
         </el-form-item>
         <el-form-item label="资源类型" prop="resourceType">
-          <el-select v-model="tempParams.resourceType" placeholder="请选择资源类型" style="width: 100%">
+          <el-select v-model="tempParams.resourceType" placeholder="请选择资源类型" style="width: 100%" @change="onTempResourceTypeChange">
             <el-option label="房间" value="ROOM" />
             <el-option label="车位" value="PARKING" />
             <el-option label="储藏室" value="STORAGE" />
           </el-select>
         </el-form-item>
         <el-form-item label="资源" prop="resourceId">
-          <el-select v-model="tempParams.resourceId" filterable placeholder="请选择资源" style="width: 100%">
-            <el-option v-for="item in roomOptions" :key="item.id" :label="item.roomAlias || item.roomNo" :value="item.id" />
+          <el-select v-model="tempParams.resourceId" filterable placeholder="请选择资源" style="width: 100%" :disabled="!tempParams.projectId || tempResourceOptions.length === 0">
+            <el-option v-for="item in tempResourceOptions" :key="item.id" :label="item.roomAlias || item.roomNo || item.spaceCode || item.name || item.id" :value="item.id" />
           </el-select>
+          <span v-if="tempParams.projectId && tempResourceOptions.length === 0 && tempParams.resourceType !== 'ROOM'" style="color: #909399; font-size: 12px">该资源类型暂无数据</span>
         </el-form-item>
         <el-form-item label="费用定义" prop="feeId">
-          <el-select v-model="tempParams.feeId" filterable placeholder="请选择费用" style="width: 100%">
-            <el-option v-for="item in feeOptions" :key="item.id" :label="item.feeName" :value="item.id" />
+          <el-select v-model="tempParams.feeId" filterable placeholder="请选择费用" style="width: 100%" @change="onTempFeeChange" :disabled="!tempParams.projectId">
+            <el-option v-for="item in tempFeeOptions" :key="item.id" :label="item.feeName" :value="item.id" />
           </el-select>
         </el-form-item>
         <el-form-item label="数量" prop="num">
@@ -197,7 +198,7 @@
         </el-form-item>
       </el-form>
       <div slot="footer" class="dialog-footer">
-        <el-button type="primary" @click="submitTemp">确 定</el-button>
+        <el-button type="primary" :loading="tempLoading" @click="submitTemp">确 定</el-button>
         <el-button @click="tempOpen = false">取 消</el-button>
       </div>
     </el-dialog>
@@ -235,6 +236,7 @@ import { formatMoney } from "@/utils/resi";
 import { listProject } from "@/api/resi/archive";
 import { listRoom } from "@/api/resi/archive";
 import { listFeeDefinition } from "@/api/resi/feeconfig";
+import { listParkingSpace } from "@/api/resi/archive";
 
 export default {
   name: "ResiReceivable",
@@ -272,6 +274,7 @@ export default {
       },
       // 临时费
       tempOpen: false,
+      tempLoading: false,
       tempParams: {
         projectId: undefined,
         resourceType: "ROOM",
@@ -289,6 +292,8 @@ export default {
         num: [{ required: true, message: "数量不能为空", trigger: "blur" }],
         price: [{ required: true, message: "单价不能为空", trigger: "blur" }]
       },
+      tempResourceOptions: [],
+      tempFeeOptions: [],
       // 详情
       detailOpen: false,
       detailData: {},
@@ -379,15 +384,65 @@ export default {
         price: undefined,
         remark: undefined
       };
+      this.tempResourceOptions = [];
+      this.tempFeeOptions = [];
       this.tempOpen = true;
+    },
+    onTempProjectChange(projectId) {
+      this.tempParams.resourceId = undefined;
+      this.tempParams.feeId = undefined;
+      this.tempParams.price = undefined;
+      this.tempResourceOptions = [];
+      this.tempFeeOptions = [];
+      if (!projectId) {
+        return;
+      }
+      // 加载该项目的资源
+      this.onTempResourceTypeChange(this.tempParams.resourceType);
+      // 加载该项目的费用定义
+      listFeeDefinition({ projectId: projectId, pageNum: 1, pageSize: 1000 }).then(response => {
+        this.tempFeeOptions = response.rows || [];
+      });
+    },
+    onTempResourceTypeChange(resourceType) {
+      this.tempParams.resourceId = undefined;
+      this.tempResourceOptions = [];
+      if (!this.tempParams.projectId) {
+        return;
+      }
+      if (resourceType === "ROOM") {
+        listRoom({ projectId: this.tempParams.projectId, pageNum: 1, pageSize: 1000 }).then(response => {
+          this.tempResourceOptions = response.rows || [];
+        });
+      } else if (resourceType === "PARKING") {
+        listParkingSpace({ projectId: this.tempParams.projectId, pageNum: 1, pageSize: 1000 }).then(response => {
+          this.tempResourceOptions = response.rows || [];
+        }).catch(() => {
+          this.tempResourceOptions = [];
+        });
+      } else if (resourceType === "STORAGE") {
+        // 储藏室按房间类型筛选（room_type=4）
+        listRoom({ projectId: this.tempParams.projectId, roomType: 4, pageNum: 1, pageSize: 1000 }).then(response => {
+          this.tempResourceOptions = response.rows || [];
+        });
+      }
+    },
+    onTempFeeChange(feeId) {
+      const fee = this.tempFeeOptions.find(item => item.id === feeId);
+      if (fee && fee.unitPrice != null) {
+        this.tempParams.price = fee.unitPrice;
+      }
     },
     submitTemp() {
       this.$refs["tempForm"].validate(valid => {
         if (valid) {
+          this.tempLoading = true;
           createTempReceivable(this.tempParams).then(() => {
             this.$modal.msgSuccess("录入成功");
             this.tempOpen = false;
             this.getList();
+          }).finally(() => {
+            this.tempLoading = false;
           });
         }
       });
