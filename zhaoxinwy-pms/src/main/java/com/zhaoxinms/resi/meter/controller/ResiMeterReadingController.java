@@ -24,6 +24,7 @@ import com.zhaoxinms.common.core.validate.EditGroup;
 import com.zhaoxinms.common.enums.BusinessType;
 import com.zhaoxinms.common.exception.ServiceException;
 import com.zhaoxinms.resi.common.annotation.ResiProjectScope;
+import com.zhaoxinms.resi.meter.dto.ResiMeterShareCalcReq;
 import com.zhaoxinms.resi.meter.entity.ResiMeterReading;
 import com.zhaoxinms.resi.meter.service.IResiMeterReadingService;
 
@@ -121,5 +122,26 @@ public class ResiMeterReadingController extends BaseController {
             }
         }
         return toAjax(meterReadingService.removeByIds(Arrays.asList(ids)));
+    }
+
+    /**
+     * 公摊计算
+     */
+    @ApiOperation("公摊计算")
+    @PreAuthorize("@ss.hasPermi('resi:meter:share')")
+    @Log(title = "住宅收费-抄表管理-公摊计算", businessType = BusinessType.UPDATE)
+    @PostMapping("/calc-share")
+    public AjaxResult calcShare(@RequestBody @Validated ResiMeterShareCalcReq req) {
+        return AjaxResult.success(meterReadingService.calcShare(req));
+    }
+
+    /**
+     * 公摊计算结果预览（不写入数据库）
+     */
+    @ApiOperation("公摊计算预览")
+    @PreAuthorize("@ss.hasPermi('resi:meter:share')")
+    @GetMapping("/share-preview")
+    public AjaxResult sharePreview(@Validated ResiMeterShareCalcReq req) {
+        return AjaxResult.success(meterReadingService.previewShare(req));
     }
 }

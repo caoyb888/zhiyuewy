@@ -1,0 +1,86 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.zhaoxinms.resi.meter.mapper.ResiMeterReadingMapper">
+
+    <resultMap type="com.zhaoxinms.resi.meter.entity.ResiMeterReading" id="ResiMeterReadingResult">
+        <id property="id" column="id"/>
+        <result property="projectId" column="project_id"/>
+        <result property="meterId" column="meter_id"/>
+        <result property="roomId" column="room_id"/>
+        <result property="feeId" column="fee_id"/>
+        <result property="period" column="period"/>
+        <result property="lastReading" column="last_reading"/>
+        <result property="lastDate" column="last_date"/>
+        <result property="currReading" column="curr_reading"/>
+        <result property="currDate" column="curr_date"/>
+        <result property="rawUsage" column="raw_usage"/>
+        <result property="lossRate" column="loss_rate"/>
+        <result property="lossAmount" column="loss_amount"/>
+        <result property="shareAmount" column="share_amount"/>
+        <result property="billedUsage" column="billed_usage"/>
+        <result property="status" column="status"/>
+        <result property="importBatch" column="import_batch"/>
+        <result property="readerId" column="reader_id"/>
+        <result property="receivableId" column="receivable_id"/>
+        <result property="creatorTime" column="creator_time"/>
+        <result property="creatorUserId" column="creator_user_id"/>
+        <result property="lastModifyTime" column="last_modify_time"/>
+        <result property="lastModifyUserId" column="last_modify_user_id"/>
+        <!-- 扩展字段 -->
+        <result property="meterCode" column="meter_code"/>
+        <result property="multiplier" column="multiplier"/>
+        <result property="roomName" column="room_name"/>
+        <result property="isPublic" column="is_public"/>
+        <result property="publicGroup" column="public_group"/>
+    </resultMap>
+
+    <sql id="selectResiMeterReadingVo">
+        SELECT r.id, r.project_id, r.meter_id, r.room_id, r.fee_id, r.period,
+               r.last_reading, r.last_date, r.curr_reading, r.curr_date,
+               r.raw_usage, r.loss_rate, r.loss_amount, r.share_amount, r.billed_usage,
+               r.status, r.import_batch, r.reader_id, r.receivable_id,
+               r.creator_time, r.creator_user_id, r.last_modify_time, r.last_modify_user_id,
+               d.meter_code, d.multiplier, d.is_public, d.public_group,
+               rm.room_alias as room_name, rm.building_area
+        FROM resi_meter_reading r
+        INNER JOIN resi_meter_device d ON r.meter_id = d.id
+        LEFT JOIN resi_room rm ON r.room_id = rm.id
+    </sql>
+
+    <!-- 查询指定公摊组的抄表记录（含总表和分户表） -->
+    <select id="selectShareGroupReadings" resultMap="ResiMeterReadingResult">
+        <include refid="selectResiMeterReadingVo"/>
+        WHERE r.project_id = #{projectId}
+          AND r.period = #{period}
+          AND d.public_group = #{publicGroup}
+          AND d.public_group IS NOT NULL
+          AND d.public_group != ''
+        ORDER BY d.is_public DESC, r.meter_id
+    </select>
+
+    <!-- 查询指定项目、期间下所有有公摊组的抄表记录 -->
+    <select id="selectAllShareGroupReadings" resultMap="ResiMeterReadingResult">
+        <include refid="selectResiMeterReadingVo"/>
+        WHERE r.project_id = #{projectId}
+          AND r.period = #{period}
+          AND d.public_group IS NOT NULL
+          AND d.public_group != ''
+        ORDER BY d.public_group, d.is_public DESC, r.meter_id
+    </select>
+
+    <!-- 查询公摊计算预览数据 -->
+    <select id="selectSharePreview" resultMap="ResiMeterReadingResult">
+        <include refid="selectResiMeterReadingVo"/>
+        WHERE r.project_id = #{projectId}
+          AND r.period = #{period}
+          <if test="publicGroup != null and publicGroup != ''">
+              AND d.public_group = #{publicGroup}
+          </if>
+          AND d.public_group IS NOT NULL
+          AND d.public_group != ''
+        ORDER BY d.public_group, d.is_public DESC, r.meter_id
+    </select>
+
+</mapper>

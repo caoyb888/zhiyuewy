@@ -6,6 +6,7 @@ import static org.mockito.Mockito.*;
 
 import java.lang.reflect.Field;
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.util.*;
 
 import org.junit.jupiter.api.AfterEach;
@@ -18,9 +19,15 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
+import com.zhaoxinms.common.exception.ServiceException;
 import com.zhaoxinms.resi.TestSecurityContext;
 import com.zhaoxinms.resi.archive.entity.ResiMeterDevice;
+import com.zhaoxinms.resi.archive.entity.ResiRoom;
 import com.zhaoxinms.resi.archive.service.IResiMeterDeviceService;
+import com.zhaoxinms.resi.archive.service.IResiRoomService;
+import com.zhaoxinms.resi.meter.dto.ResiMeterShareCalcReq;
+import com.zhaoxinms.resi.meter.dto.ResiMeterShareCalcResultVo;
+import com.zhaoxinms.resi.meter.dto.ResiMeterShareDetailVo;
 import com.zhaoxinms.resi.meter.entity.ResiMeterReading;
 import com.zhaoxinms.resi.meter.mapper.ResiMeterReadingMapper;
 
@@ -36,6 +43,9 @@ class ResiMeterReadingServiceImplTest {
 
     @Mock
     private IResiMeterDeviceService meterDeviceService;
+
+    @Mock
+    private IResiRoomService roomService;
 
     @InjectMocks
     private ResiMeterReadingServiceImpl meterReadingService;
@@ -241,5 +251,229 @@ class ResiMeterReadingServiceImplTest {
         reading.setCurrDate(java.sql.Date.valueOf("2026-05-15"));
         reading.setLastReading(new BigDecimal("100.0000"));
         return reading;
+    }
+
+    // ==================== 公摊计算测试 ====================
+
+    @Test
+    @DisplayName("公摊计算预览：标准场景（总表100度，分户75度，公摊25度）")
+    void previewShare_standardScenario() {
+        // 准备数据：公摊组 G01
+        List<ResiMeterReading> readings = Arrays.asList(
+            buildShareReading("R-Total", 0L, null, 100, 1),   // 总表（无房间）
+            buildShareReading("R-01", 1L, "101", 30, 0),      // 分户 E01，60㎡
+            buildShareReading("R-02", 2L, "102", 25, 0),      // 分户 E02，40㎡
+            buildShareReading("R-03", 3L, "103", 20, 0)       // 分户 E03，50㎡
+        );
+        when(meterReadingMapper.selectShareGroupReadings(1L, "2026-05", "G01"))
+            .thenReturn(readings);
+
+        // Mock 房间面积
+        when(roomService.getById(1L)).thenReturn(buildRoom("101", new BigDecimal("60.00")));
+        when(roomService.getById(2L)).thenReturn(buildRoom("102", new BigDecimal("40.00")));
+        when(roomService.getById(3L)).thenReturn(buildRoom("103", new BigDecimal("50.00")));
+
+        ResiMeterShareCalcReq req = new ResiMeterShareCalcReq();
+        req.setProjectId(1L);
+        req.setPeriod("2026-05");
+        req.setPublicGroup("G01");
+
+        List<ResiMeterShareCalcResultVo> results = meterReadingService.previewShare(req);
+
+        assertEquals(1, results.size());
+        ResiMeterShareCalcResultVo result = results.get(0);
+        assertEquals("G01", result.getPublicGroup());
+        assertEquals(new BigDecimal("100.0000"), result.getTotalUsage());
+        assertEquals(new BigDecimal("75.0000"), result.getSubTotalUsage());
+        assertEquals(new BigDecimal("25.0000"), result.getShareTotal());
+        assertEquals(new BigDecimal("150.00"), result.getTotalArea());
+        assertEquals(3, result.getRoomCount());
+
+        // 验证分摊量
+        List<ResiMeterShareDetailVo> details = result.getDetails();
+        assertEquals(3, details.size());
+
+        // 101室：25 × 60/150 = 10.00
+        ResiMeterShareDetailVo d1 = details.get(0);
+        assertEquals(new BigDecimal("10.0000"), d1.getShareAmount());
+        assertEquals(new BigDecimal("40.0000"), d1.getBilledUsage()); // 30 + 10 = 40
+
+        // 102室：25 × 40/150 = 6.6667（保留4位小数）
+        ResiMeterShareDetailVo d2 = details.get(1);
+        assertEquals(new BigDecimal("6.6667"), d2.getShareAmount());
+        assertEquals(new BigDecimal("31.6667"), d2.getBilledUsage()); // 25 + 6.6667 = 31.6667
+
+        // 103室：差额调整 = 25 - 10.00 - 6.6667 = 8.3333
+        ResiMeterShareDetailVo d3 = details.get(2);
+        assertEquals(new BigDecimal("8.3333"), d3.getShareAmount());
+        assertEquals(new BigDecimal("28.3333"), d3.getBilledUsage()); // 20 + 8.3333 = 28.3333
+
+        // 守恒验证：三户分摊量之和 = 25.0000（误差 < 0.01）
+        BigDecimal sumShare = d1.getShareAmount().add(d2.getShareAmount()).add(d3.getShareAmount());
+        BigDecimal diff = sumShare.subtract(new BigDecimal("25.0000")).abs();
+        assertTrue(diff.compareTo(new BigDecimal("0.0001")) <= 0,
+            "分摊量之和误差应小于0.0001，实际差值：" + diff);
+    }
+
+    @Test
+    @DisplayName("公摊计算：无公摊量（总表=分户合计）")
+    void previewShare_zeroShare() {
+        List<ResiMeterReading> readings = Arrays.asList(
+            buildShareReading("R-Total", 0L, null, 100, 1),
+            buildShareReading("R-01", 1L, "101", 40, 0),
+            buildShareReading("R-02", 2L, "102", 60, 0)
+        );
+        when(meterReadingMapper.selectShareGroupReadings(1L, "2026-05", "G02"))
+            .thenReturn(readings);
+
+        when(roomService.getById(1L)).thenReturn(buildRoom("101", new BigDecimal("60.00")));
+        when(roomService.getById(2L)).thenReturn(buildRoom("102", new BigDecimal("40.00")));
+
+        ResiMeterShareCalcReq req = new ResiMeterShareCalcReq();
+        req.setProjectId(1L);
+        req.setPeriod("2026-05");
+        req.setPublicGroup("G02");
+
+        List<ResiMeterShareCalcResultVo> results = meterReadingService.previewShare(req);
+
+        assertEquals(1, results.size());
+        assertEquals(new BigDecimal("0.0000"), results.get(0).getShareTotal());
+        for (ResiMeterShareDetailVo detail : results.get(0).getDetails()) {
+            assertEquals(new BigDecimal("0.0000"), detail.getShareAmount());
+        }
+    }
+
+    @Test
+    @DisplayName("公摊计算：总表缺失应报错")
+    void previewShare_missingTotalMeter_shouldThrow() {
+        List<ResiMeterReading> readings = Arrays.asList(
+            buildShareReading("R-01", 1L, "101", 40, 0),
+            buildShareReading("R-02", 2L, "102", 60, 0)
+        );
+        when(meterReadingMapper.selectShareGroupReadings(1L, "2026-05", "G03"))
+            .thenReturn(readings);
+
+        ResiMeterShareCalcReq req = new ResiMeterShareCalcReq();
+        req.setProjectId(1L);
+        req.setPeriod("2026-05");
+        req.setPublicGroup("G03");
+
+        ServiceException ex = assertThrows(ServiceException.class,
+            () -> meterReadingService.previewShare(req));
+        assertTrue(ex.getMessage().contains("缺少公摊总表"));
+    }
+
+    @Test
+    @DisplayName("公摊计算：负公摊量按0处理")
+    void previewShare_negativeShare_shouldBeZero() {
+        List<ResiMeterReading> readings = Arrays.asList(
+            buildShareReading("R-Total", 0L, null, 50, 1),   // 总表50度
+            buildShareReading("R-01", 1L, "101", 60, 0)      // 分户60度（超过总表）
+        );
+        when(meterReadingMapper.selectShareGroupReadings(1L, "2026-05", "G04"))
+            .thenReturn(readings);
+
+        when(roomService.getById(1L)).thenReturn(buildRoom("101", new BigDecimal("100.00")));
+
+        ResiMeterShareCalcReq req = new ResiMeterShareCalcReq();
+        req.setProjectId(1L);
+        req.setPeriod("2026-05");
+        req.setPublicGroup("G04");
+
+        List<ResiMeterShareCalcResultVo> results = meterReadingService.previewShare(req);
+
+        assertEquals(0, results.get(0).getShareTotal().compareTo(BigDecimal.ZERO));
+        assertEquals(0, results.get(0).getDetails().get(0).getShareAmount().compareTo(BigDecimal.ZERO));
+    }
+
+    @Test
+    @DisplayName("公摊计算：按面积比6:4分摊，误差<0.01")
+    void previewShare_areaRatio6to4_errorLessThan001() {
+        // 总表100度，分户A=40度(60㎡)，分户B=30度(40㎡)，公摊=30度
+        List<ResiMeterReading> readings = Arrays.asList(
+            buildShareReading("R-Total", 0L, null, 100, 1),
+            buildShareReading("R-A", 1L, "A", 40, 0),
+            buildShareReading("R-B", 2L, "B", 30, 0)
+        );
+        when(meterReadingMapper.selectAllShareGroupReadings(1L, "2026-05"))
+            .thenReturn(readings);
+
+        when(roomService.getById(1L)).thenReturn(buildRoom("A", new BigDecimal("60.00")));
+        when(roomService.getById(2L)).thenReturn(buildRoom("B", new BigDecimal("40.00")));
+
+        ResiMeterShareCalcReq req = new ResiMeterShareCalcReq();
+        req.setProjectId(1L);
+        req.setPeriod("2026-05");
+        // publicGroup 为空，触发 selectAllShareGroupReadings
+
+        List<ResiMeterShareCalcResultVo> results = meterReadingService.previewShare(req);
+
+        assertEquals(1, results.size());
+        ResiMeterShareCalcResultVo result = results.get(0);
+        assertEquals(new BigDecimal("30.0000"), result.getShareTotal());
+
+        ResiMeterShareDetailVo dA = result.getDetails().get(0);
+        ResiMeterShareDetailVo dB = result.getDetails().get(1);
+
+        // A 分摊：30 × 60/100 = 18.00
+        assertEquals(new BigDecimal("18.0000"), dA.getShareAmount());
+        // B 分摊：30 - 18.00 = 12.00（差额调整）
+        assertEquals(new BigDecimal("12.0000"), dB.getShareAmount());
+
+        // 守恒验证
+        BigDecimal sum = dA.getShareAmount().add(dB.getShareAmount());
+        BigDecimal diff = sum.subtract(new BigDecimal("30.0000")).abs();
+        assertTrue(diff.compareTo(new BigDecimal("0.0100")) < 0,
+            "误差应小于0.01，实际：" + diff);
+    }
+
+    @Test
+    @DisplayName("公摊计算持久化：更新数据库")
+    void calcShare_shouldUpdateDatabase() {
+        List<ResiMeterReading> readings = Arrays.asList(
+            buildShareReading("R-Total", 0L, null, 100, 1),
+            buildShareReading("R-01", 1L, "101", 40, 0),
+            buildShareReading("R-02", 2L, "102", 30, 0)
+        );
+        when(meterReadingMapper.selectAllShareGroupReadings(1L, "2026-05"))
+            .thenReturn(readings);
+        when(meterReadingMapper.updateById(any(ResiMeterReading.class))).thenReturn(1);
+
+        when(roomService.getById(1L)).thenReturn(buildRoom("101", new BigDecimal("60.00")));
+        when(roomService.getById(2L)).thenReturn(buildRoom("102", new BigDecimal("40.00")));
+
+        ResiMeterShareCalcReq req = new ResiMeterShareCalcReq();
+        req.setProjectId(1L);
+        req.setPeriod("2026-05");
+
+        List<ResiMeterShareCalcResultVo> results = meterReadingService.calcShare(req);
+
+        assertEquals(1, results.size());
+        // 验证 updateById 被调用了2次（两个分户表）
+        verify(meterReadingMapper, times(2)).updateById(any(ResiMeterReading.class));
+    }
+
+    private ResiMeterReading buildShareReading(String id, Long meterId, String roomName,
+                                                double rawUsage, int isPublic) {
+        ResiMeterReading reading = new ResiMeterReading();
+        reading.setId(id);
+        reading.setMeterId(meterId);
+        reading.setRoomId(meterId); // 简化：meterId 作为 roomId
+        reading.setProjectId(1L);
+        reading.setPeriod("2026-05");
+        reading.setRawUsage(new BigDecimal(rawUsage).setScale(4, RoundingMode.HALF_UP));
+        reading.setLossAmount(BigDecimal.ZERO);
+        reading.setMeterCode("M" + meterId);
+        reading.setRoomName(roomName);
+        reading.setIsPublic(isPublic);
+        reading.setPublicGroup("G01");
+        return reading;
+    }
+
+    private ResiRoom buildRoom(String alias, BigDecimal area) {
+        ResiRoom room = new ResiRoom();
+        room.setRoomAlias(alias);
+        room.setBuildingArea(area);
+        return room;
     }
 }
