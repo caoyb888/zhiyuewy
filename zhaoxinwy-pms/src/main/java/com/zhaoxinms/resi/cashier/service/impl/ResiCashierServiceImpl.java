@@ -41,7 +41,9 @@ import com.zhaoxinms.resi.common.ResiConstants;
 import com.zhaoxinms.resi.feeconfig.entity.ResiDiscount;
 import com.zhaoxinms.resi.feeconfig.mapper.ResiDiscountMapper;
 import com.zhaoxinms.resi.finance.entity.ResiPayLog;
+import com.zhaoxinms.resi.finance.entity.ResiPreAccount;
 import com.zhaoxinms.resi.finance.mapper.ResiPayLogMapper;
+import com.zhaoxinms.resi.finance.service.IResiPrePayService;
 import com.zhaoxinms.resi.receivable.entity.ResiReceivable;
 import com.zhaoxinms.resi.receivable.mapper.ResiReceivableMapper;
 
@@ -76,6 +78,9 @@ public class ResiCashierServiceImpl implements IResiCashierService {
 
     @Autowired
     private RedisTemplate<String, String> redisTemplate;
+
+    @Autowired
+    private IResiPrePayService prePayService;
 
     // ==================== S4-03 查询接口 ====================
 
@@ -270,13 +275,71 @@ public class ResiCashierServiceImpl implements IResiCashierService {
 
         BigDecimal receivableAmount = totalAmount.add(overdueAmount).subtract(discountAmount);
 
+        // 5. 预收款冲抵计算（预览）
+        BigDecimal prePayAmount = BigDecimal.ZERO;
+        List<ResiCashierCalcVo.PrePayAccount> prePayAccountVos = new ArrayList<>();
+        if (Boolean.TRUE.equals(req.getUsePrePay())
+                && StringUtils.isNotBlank(req.getResourceType())
+                && req.getResourceId() != null) {
+            List<ResiPreAccount> accounts = prePayService.listAccounts(req.getProjectId(), req.getResourceType(), req.getResourceId());
+            for (ResiPreAccount acc : accounts) {
+                ResiCashierCalcVo.PrePayAccount vo = new ResiCashierCalcVo.PrePayAccount();
+                vo.setAccountId(acc.getId());
+                vo.setFeeId(acc.getFeeId());
+                vo.setBalance(acc.getBalance());
+                vo.setEarmark(acc.getFeeId() != null);
+                prePayAccountVos.add(vo);
+            }
+
+            // 模拟冲抵：专款优先匹配同 fee_id 的费用，通用账户次之
+            BigDecimal remainingReceivable = receivableAmount;
+            for (ResiReceivable r : receivables) {
+                if (remainingReceivable.compareTo(BigDecimal.ZERO) <= 0) {
+                    break;
+                }
+                BigDecimal need = r.getReceivable().subtract(r.getPaidAmount() != null ? r.getPaidAmount() : BigDecimal.ZERO);
+                if (need.compareTo(BigDecimal.ZERO) <= 0) {
+                    continue;
+                }
+                // 找专款
+                for (ResiPreAccount acc : accounts) {
+                    if (acc.getFeeId() != null && acc.getFeeId().equals(r.getFeeId()) && acc.getBalance().compareTo(BigDecimal.ZERO) > 0) {
+                        BigDecimal use = need.min(acc.getBalance()).min(remainingReceivable);
+                        prePayAmount = prePayAmount.add(use);
+                        remainingReceivable = remainingReceivable.subtract(use);
+                        break;
+                    }
+                }
+                if (remainingReceivable.compareTo(BigDecimal.ZERO) <= 0) {
+                    break;
+                }
+                // 找通用
+                for (ResiPreAccount acc : accounts) {
+                    if (acc.getFeeId() == null && acc.getBalance().compareTo(BigDecimal.ZERO) > 0) {
+                        BigDecimal use = need.min(acc.getBalance()).min(remainingReceivable);
+                        prePayAmount = prePayAmount.add(use);
+                        remainingReceivable = remainingReceivable.subtract(use);
+                        break;
+                    }
+                }
+            }
+        }
+
+        BigDecimal actualPayAmount = receivableAmount.subtract(prePayAmount);
+        if (actualPayAmount.compareTo(BigDecimal.ZERO) < 0) {
+            actualPayAmount = BigDecimal.ZERO;
+        }
+
         ResiCashierCalcVo result = new ResiCashierCalcVo();
         result.setItems(items);
         result.setTotalAmount(totalAmount);
         result.setOverdueAmount(overdueAmount);
         result.setDiscountAmount(discountAmount);
         result.setReceivableAmount(receivableAmount);
-        result.setPayAmount(receivableAmount);
+        result.setPayAmount(actualPayAmount);
+        result.setActualPayAmount(actualPayAmount);
+        result.setPrePayAmount(prePayAmount);
+        result.setPrePayAccounts(prePayAccountVos);
         result.setDiscountId(req.getDiscountId());
         result.setDiscountName(discountName);
         return result;
@@ -338,32 +401,66 @@ public class ResiCashierServiceImpl implements IResiCashierService {
             }
         }
 
-        BigDecimal expectedPay = totalAmount.add(overdueAmount).subtract(discountAmount);
+        BigDecimal receivableAmount = totalAmount.add(overdueAmount).subtract(discountAmount);
 
-        // 5. 校验实收金额（允许少量误差 0.01）
-        if (req.getPayAmount() == null || req.getPayAmount().compareTo(BigDecimal.ZERO) <= 0) {
-            throw new ServiceException("实收金额必须大于0");
+        // 5. 预生成收款流水ID（供预收款冲抵关联用）
+        String payLogId = java.util.UUID.randomUUID().toString().replace("-", "");
+
+        // 6. 预收款冲抵（实际执行）
+        BigDecimal prePayAmount = BigDecimal.ZERO;
+        if (Boolean.TRUE.equals(req.getUsePrePay())
+                && StringUtils.isNotBlank(req.getResourceType())
+                && req.getResourceId() != null) {
+            prePayAmount = prePayService.offsetForCollect(payLogId, req.getProjectId(), req.getResourceType(),
+                    req.getResourceId(), lockedList, userId, now);
+        }
+
+        BigDecimal expectedPay = receivableAmount.subtract(prePayAmount);
+        if (expectedPay.compareTo(BigDecimal.ZERO) < 0) {
+            expectedPay = BigDecimal.ZERO;
+        }
+
+        // 7. 校验实收金额（允许少量误差 0.01）
+        if (req.getPayAmount() == null || req.getPayAmount().compareTo(BigDecimal.ZERO) < 0) {
+            throw new ServiceException("实收金额不能为负数");
+        }
+        // 若冲抵后还需支付，则校验金额；若冲抵已全额覆盖，则允许payAmount=0
+        if (expectedPay.compareTo(BigDecimal.ZERO) > 0) {
+            if (req.getPayAmount().compareTo(BigDecimal.ZERO) <= 0) {
+                throw new ServiceException("实收金额必须大于0");
+            }
         }
         if (req.getPayAmount().subtract(expectedPay).abs().compareTo(new BigDecimal("0.02")) > 0) {
             throw new ServiceException("实收金额与应收金额不符，应收：" + expectedPay + "元");
         }
 
-        // 6. 生成收据号
+        // 8. 生成收据号
         String payNo = billRuleService.getNumber(ResiConstants.BILL_RULE_RESI_RECEIPT);
         if (StringUtils.isBlank(payNo) || payNo.contains("单据规则不存在")) {
             throw new ServiceException("收据号生成失败，请检查单据规则配置");
         }
 
-        // 7. 批量更新应收记录
-        String payLogId = java.util.UUID.randomUUID().toString().replace("-", "");
+        // 9. 批量更新应收记录（预收款冲抵可能已更新，此处补充现金收款部分）
+        BigDecimal remainingCash = req.getPayAmount();
         for (ResiReceivable r : lockedList) {
             BigDecimal thisReceivable = r.getReceivable() != null ? r.getReceivable() : BigDecimal.ZERO;
-            r.setPayState(ResiConstants.PAY_STATE_PAID);
-            r.setPaidAmount(thisReceivable);
+            BigDecimal currentPaid = r.getPaidAmount() != null ? r.getPaidAmount() : BigDecimal.ZERO;
+            if (currentPaid.compareTo(thisReceivable) < 0 && remainingCash.compareTo(BigDecimal.ZERO) > 0) {
+                BigDecimal gap = thisReceivable.subtract(currentPaid);
+                BigDecimal add = gap.min(remainingCash);
+                currentPaid = currentPaid.add(add);
+                remainingCash = remainingCash.subtract(add);
+                r.setPaidAmount(currentPaid);
+            }
+            if (currentPaid.compareTo(thisReceivable) >= 0) {
+                r.setPayState(ResiConstants.PAY_STATE_PAID);
+            } else if (currentPaid.compareTo(BigDecimal.ZERO) > 0) {
+                r.setPayState(ResiConstants.PAY_STATE_PART_PAID);
+            }
             r.setPayLogId(payLogId);
             r.setPayTime(now);
             r.setDiscountId(req.getDiscountId());
-            r.setDiscountAmount(discountAmount); // 简化：将总折扣平摊到每条记录（或只记录到第一条）
+            r.setDiscountAmount(discountAmount);
             r.setLastModifyTime(now);
             r.setLastModifyUserId(userId);
             receivableMapper.updateById(r);
@@ -403,7 +500,7 @@ public class ResiCashierServiceImpl implements IResiCashierService {
         payLog.setTotalAmount(totalAmount.add(overdueAmount));
         payLog.setDiscountAmount(discountAmount);
         payLog.setOverdueAmount(overdueAmount);
-        payLog.setPrePayAmount(BigDecimal.ZERO);
+        payLog.setPrePayAmount(prePayAmount);
         payLog.setPayAmount(req.getPayAmount());
         payLog.setChangeAmount(req.getChangeAmount() != null ? req.getChangeAmount() : BigDecimal.ZERO);
         payLog.setNote(req.getNote());
@@ -426,8 +523,8 @@ public class ResiCashierServiceImpl implements IResiCashierService {
             log.warn("清除看板缓存失败 projectId={} error={}", req.getProjectId(), e.getMessage());
         }
 
-        log.info("收款成功 projectId={} roomId={} payNo={} amount={} receivableCount={}",
-                req.getProjectId(), req.getResourceId(), payNo, req.getPayAmount(), lockedList.size());
+        log.info("收款成功 projectId={} roomId={} payNo={} amount={} prePayAmount={} receivableCount={}",
+                req.getProjectId(), req.getResourceId(), payNo, req.getPayAmount(), prePayAmount, lockedList.size());
 
         // 11. 组装返回结果
         ResiCashierCollectVo result = new ResiCashierCollectVo();

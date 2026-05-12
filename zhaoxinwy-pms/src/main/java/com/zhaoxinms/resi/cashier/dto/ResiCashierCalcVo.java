@@ -35,6 +35,15 @@ public class ResiCashierCalcVo implements Serializable {
     /** 折扣名称 */
     private String discountName;
 
+    /** 预收款冲抵金额 */
+    private BigDecimal prePayAmount;
+
+    /** 预收款冲抵后实付金额 */
+    private BigDecimal actualPayAmount;
+
+    /** 可用预收款账户列表 */
+    private List<PrePayAccount> prePayAccounts;
+
     public List<ReceivableItem> getItems() {
         return items;
     }
@@ -97,6 +106,83 @@ public class ResiCashierCalcVo implements Serializable {
 
     public void setDiscountName(String discountName) {
         this.discountName = discountName;
+    }
+
+    public BigDecimal getPrePayAmount() {
+        return prePayAmount;
+    }
+
+    public void setPrePayAmount(BigDecimal prePayAmount) {
+        this.prePayAmount = prePayAmount;
+    }
+
+    public BigDecimal getActualPayAmount() {
+        return actualPayAmount;
+    }
+
+    public void setActualPayAmount(BigDecimal actualPayAmount) {
+        this.actualPayAmount = actualPayAmount;
+    }
+
+    public List<PrePayAccount> getPrePayAccounts() {
+        return prePayAccounts;
+    }
+
+    public void setPrePayAccounts(List<PrePayAccount> prePayAccounts) {
+        this.prePayAccounts = prePayAccounts;
+    }
+
+    /**
+     * 可用预收款账户
+     */
+    public static class PrePayAccount implements Serializable {
+        private static final long serialVersionUID = 1L;
+
+        private String accountId;
+        private String feeId;
+        private String feeName;
+        private BigDecimal balance;
+        private boolean earmark;
+
+        public String getAccountId() {
+            return accountId;
+        }
+
+        public void setAccountId(String accountId) {
+            this.accountId = accountId;
+        }
+
+        public String getFeeId() {
+            return feeId;
+        }
+
+        public void setFeeId(String feeId) {
+            this.feeId = feeId;
+        }
+
+        public String getFeeName() {
+            return feeName;
+        }
+
+        public void setFeeName(String feeName) {
+            this.feeName = feeName;
+        }
+
+        public BigDecimal getBalance() {
+            return balance;
+        }
+
+        public void setBalance(BigDecimal balance) {
+            this.balance = balance;
+        }
+
+        public boolean isEarmark() {
+            return earmark;
+        }
+
+        public void setEarmark(boolean earmark) {
+            this.earmark = earmark;
+        }
     }
 
     /**

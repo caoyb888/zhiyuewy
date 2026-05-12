@@ -38,7 +38,7 @@ public class ResiCashierCollectReq implements Serializable {
 
     /** 实收金额 */
     @NotNull(message = "实收金额不能为空")
-    @DecimalMin(value = "0.01", message = "实收金额必须大于0")
+    @DecimalMin(value = "0.00", message = "实收金额不能为负数")
     private BigDecimal payAmount;
 
     /** 折扣ID（可选） */
@@ -49,6 +49,9 @@ public class ResiCashierCollectReq implements Serializable {
 
     /** 收据备注 */
     private String note;
+
+    /** 是否使用预收款冲抵 */
+    private Boolean usePrePay;
 
     public Long getProjectId() {
         return projectId;
@@ -120,5 +123,13 @@ public class ResiCashierCollectReq implements Serializable {
 
     public void setNote(String note) {
         this.note = note;
+    }
+
+    public Boolean getUsePrePay() {
+        return usePrePay;
+    }
+
+    public void setUsePrePay(Boolean usePrePay) {
+        this.usePrePay = usePrePay;
     }
 }

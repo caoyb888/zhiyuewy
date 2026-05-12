@@ -81,13 +81,30 @@
               <div class="label">折扣减免</div>
               <div class="value text-warning">{{ totalDiscount | formatMoney }}</div>
             </div>
+            <div v-if="prePayAmount > 0" class="summary-item">
+              <div class="label">预收款冲抵</div>
+              <div class="value text-warning">{{ prePayAmount | formatMoney }}</div>
+            </div>
             <div class="summary-item">
-              <div class="label">实收金额</div>
+              <div class="label">{{ prePayAmount > 0 ? '冲抵后应付' : '实收金额' }}</div>
               <div class="value text-danger">{{ totalPay | formatMoney }}</div>
             </div>
           </div>
           <el-divider />
           <el-form label-width="80px" size="small">
+            <el-form-item v-if="prePayAccounts.length > 0" label="预收款余额">
+              <div style="font-size:12px;color:#606266;">
+                <div v-for="acc in prePayAccounts" :key="acc.id">
+                  {{ acc.feeName || '通用预收款' }}：{{ acc.balance | formatMoney }}
+                  <el-tag v-if="acc.feeId" size="mini" type="warning">专款专用</el-tag>
+                </div>
+              </div>
+            </el-form-item>
+            <el-form-item v-if="prePayAccounts.length > 0">
+              <el-checkbox v-model="usePrePay" @change="calcPreview">
+                使用预收款冲抵（余额合计 {{ totalPrePayBalance | formatMoney }}）
+              </el-checkbox>
+            </el-form-item>
             <el-form-item label="支付方式">
               <el-select v-model="payForm.payMethod" placeholder="请选择" style="width: 100%">
                 <el-option label="现金" value="CASH" />
@@ -184,7 +201,7 @@
 
 <script>
 import { formatMoney, payStateLabel, payStateTagType } from '@/utils/resi'
-import { searchRoom, getRoomReceivables, getRoomSummary, calcCollect, collectPayment, getReceiptPrintData } from '@/api/resi/cashier'
+import { searchRoom, getRoomReceivables, getRoomSummary, calcCollect, collectPayment, getReceiptPrintData, getRoomPreAccounts } from '@/api/resi/cashier'
 
 export default {
   name: 'ResiCashier',
@@ -209,6 +226,11 @@ export default {
       totalReceivable: 0,
       totalDiscount: 0,
       totalPay: 0,
+      prePayAmount: 0,
+      actualPay: 0,
+      usePrePay: false,
+      prePayAccounts: [],
+      totalPrePayBalance: 0,
       payForm: {
         payMethod: 'CASH',
         payAmount: 0,
@@ -290,7 +312,17 @@ export default {
         this.currentRoomId = data.roomId
         this.currentProjectId = data.projectId || null
         this.loadReceivables(data.roomId)
+        this.loadPreAccounts(data.projectId, data.roomId)
       }
+    },
+    loadPreAccounts(projectId, roomId) {
+      this.prePayAccounts = []
+      this.totalPrePayBalance = 0
+      if (!projectId || !roomId) return
+      getRoomPreAccounts(projectId, 'ROOM', roomId).then(res => {
+        this.prePayAccounts = res.data || []
+        this.totalPrePayBalance = this.prePayAccounts.reduce((sum, a) => sum + Number(a.balance || 0), 0)
+      }).catch(() => {})
     },
     loadReceivables(roomId) {
       this.loading = true
@@ -306,24 +338,61 @@ export default {
     },
     handleSelectionChange(selection) {
       this.selectedIds = selection.map(item => item.id)
-      // 本地快速计算展示金额
-      let totalReceivable = 0
-      let totalDiscount = 0
-      selection.forEach(item => {
-        totalReceivable += Number(item.receivable || 0)
-        totalDiscount += Number(item.discountAmount || 0)
-      })
-      this.totalReceivable = totalReceivable
-      this.totalDiscount = totalDiscount
-      this.totalPay = totalReceivable - totalDiscount
-      this.payForm.payAmount = Number(this.totalPay.toFixed(2))
-      this.calcResult = null
+      this.calcPreview()
+    },
+    async calcPreview() {
+      if (this.selectedIds.length === 0) {
+        this.totalReceivable = 0
+        this.totalDiscount = 0
+        this.totalPay = 0
+        this.prePayAmount = 0
+        this.actualPay = 0
+        this.payForm.payAmount = 0
+        this.calcResult = null
+        return
+      }
+      try {
+        const calcReq = {
+          projectId: this.currentProjectId,
+          receivableIds: this.selectedIds,
+          usePrePay: this.usePrePay,
+          resourceType: 'ROOM',
+          resourceId: this.currentRoomId
+        }
+        const calcRes = await calcCollect(calcReq)
+        this.calcResult = calcRes.data
+        this.totalReceivable = Number(this.calcResult.receivableAmount || 0) + Number(this.calcResult.prePayAmount || 0)
+        this.totalDiscount = Number(this.calcResult.discountAmount || 0)
+        this.prePayAmount = Number(this.calcResult.prePayAmount || 0)
+        this.actualPay = Number(this.calcResult.actualPayAmount || this.calcResult.payAmount || 0)
+        this.totalPay = this.actualPay
+        this.payForm.payAmount = Number(this.totalPay.toFixed(2))
+      } catch (e) {
+        // 本地快速计算作为降级
+        let totalReceivable = 0
+        let totalDiscount = 0
+        this.receivableList.filter(r => this.selectedIds.includes(r.id)).forEach(item => {
+          totalReceivable += Number(item.receivable || 0)
+          totalDiscount += Number(item.discountAmount || 0)
+        })
+        this.totalReceivable = totalReceivable
+        this.totalDiscount = totalDiscount
+        this.totalPay = totalReceivable - totalDiscount
+        this.payForm.payAmount = Number(this.totalPay.toFixed(2))
+        this.prePayAmount = 0
+        this.actualPay = this.totalPay
+      }
     },
     resetSummary() {
       this.totalReceivable = 0
       this.totalDiscount = 0
       this.totalPay = 0
+      this.prePayAmount = 0
+      this.actualPay = 0
+      this.totalPrePayBalance = 0
       this.payForm.payAmount = 0
+      this.prePayAccounts = []
+      this.usePrePay = false
     },
     async handleCollect() {
       if (this.selectedIds.length === 0) {
@@ -342,8 +411,8 @@ export default {
         this.$message.warning('请选择支付方式')
         return
       }
-      if (!this.payForm.payAmount || this.payForm.payAmount <= 0) {
-        this.$message.warning('实收金额必须大于0')
+      if (this.actualPay > 0 && (!this.payForm.payAmount || this.payForm.payAmount < 0)) {
+        this.$message.warning('实收金额不能为负数')
         return
       }
 
@@ -352,11 +421,14 @@ export default {
         // 1. 先调用 calc 预览接口做金额校验
         const calcReq = {
           projectId: this.currentProjectId,
-          receivableIds: this.selectedIds
+          receivableIds: this.selectedIds,
+          usePrePay: this.usePrePay,
+          resourceType: 'ROOM',
+          resourceId: this.currentRoomId
         }
         const calcRes = await calcCollect(calcReq)
         this.calcResult = calcRes.data
-        const expectedPay = Number(this.calcResult.receivableAmount || this.calcResult.payAmount || 0)
+        const expectedPay = Number(this.calcResult.actualPayAmount || this.calcResult.payAmount || 0)
         const actualPay = Number(this.payForm.payAmount)
         if (Math.abs(expectedPay - actualPay) > 0.02) {
           this.$message.warning('实收金额与应收金额不符，应收：' + expectedPay.toFixed(2) + ' 元')
@@ -371,7 +443,8 @@ export default {
           receivableIds: this.selectedIds,
           payMethod: this.payForm.payMethod,
           payAmount: this.payForm.payAmount,
-          note: this.payForm.note || ''
+          note: this.payForm.note || '',
+          usePrePay: this.usePrePay
         }
         const collectRes = await collectPayment(collectReq)
         const result = collectRes.data
@@ -384,8 +457,9 @@ export default {
           duration: 5000
         })
 
-        // 3. 刷新费用列表
+        // 3. 刷新费用列表和预收款余额
         this.loadReceivables(this.currentRoomId)
+        this.loadPreAccounts(this.currentProjectId, this.currentRoomId)
 
         // 4. 打开收款成功弹窗（含打印按钮）
         this.openReceiptDialog(result.payLogId)

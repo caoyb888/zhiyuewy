@@ -33,13 +33,6 @@ export function getRoomPayLogs(roomId, params) {
   })
 }
 
-export function getRoomPreAccounts(roomId) {
-  return request({
-    url: '/resi/cashier/room/' + roomId + '/pre-accounts',
-    method: 'get'
-  })
-}
-
 export function getRoomDeposits(roomId) {
   return request({
     url: '/resi/cashier/room/' + roomId + '/deposits',
@@ -127,5 +120,13 @@ export function batchOffsetPrePay(data) {
     url: '/resi/finance/pre-pay/batch-offset',
     method: 'post',
     data
+  })
+}
+
+export function getRoomPreAccounts(projectId, resourceType, resourceId) {
+  return request({
+    url: '/resi/finance/pre-pay/accounts',
+    method: 'get',
+    params: { projectId, resourceType, resourceId }
   })
 }

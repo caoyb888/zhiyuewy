@@ -337,4 +337,73 @@ class ResiReceivableGenServiceImplTest {
         room.setState(ResiConstants.ROOM_STATE_NORMAL);
         return room;
     }
+
+    // ==================== S4-06 大规模批量生成测试 ====================
+
+    @Test
+    @DisplayName("批量生成-500个房间：全部生成成功，gen_batch一致")
+    void batchGenerate_500Rooms_success() {
+        // Given
+        ResiReceivableGenerateReq req = new ResiReceivableGenerateReq();
+        req.setProjectId(1L);
+        req.setBillPeriod("2026-07");
+
+        when(receivableMapper.selectCount(any(QueryWrapper.class))).thenReturn(0);
+
+        List<ResiFeeAllocation> allocations = buildAllocations(500, "PERIOD");
+        when(feeAllocationService.list(any(QueryWrapper.class))).thenReturn(allocations);
+
+        for (int i = 1; i <= 500; i++) {
+            ResiFeeDefinition feeDef = buildFeeDefinition("fee-" + i, ResiConstants.CALC_TYPE_FIXED, "PERIOD");
+            feeDef.setUnitPrice(new BigDecimal("200.0000"));
+            when(feeDefinitionService.getById("fee-" + i)).thenReturn(feeDef);
+
+            ResiRoom room = buildRoom(i, new BigDecimal("100.00"));
+            when(roomService.getById((long) i)).thenReturn(room);
+        }
+
+        when(receivableMapper.batchInsert(anyList())).thenAnswer(inv -> {
+            List<ResiReceivable> list = inv.getArgument(0);
+            // 验证每批不超过500条
+            assertTrue(list.size() <= 500, "每批插入不应超过500条");
+            return list.size();
+        });
+
+        // When
+        long startTime = System.currentTimeMillis();
+        ResiReceivableGenerateVo result = genService.batchGenerate(req);
+        long elapsed = System.currentTimeMillis() - startTime;
+
+        // Then
+        assertEquals("GEN-1-2026-07", result.getGenBatch());
+        assertEquals(500, result.getTotal());
+        assertEquals(500, result.getSuccess());
+        assertEquals(0, result.getSkip());
+        // 验证耗时在合理范围内（单元测试中无真实DB操作，应<5秒）
+        assertTrue(elapsed < 5000, "500条生成耗时超过5秒：" + elapsed + "ms");
+
+        // 验证 batchInsert 被调用（500条一批，应调用1次）
+        verify(receivableMapper, atLeast(1)).batchInsert(anyList());
+    }
+
+    @Test
+    @DisplayName("批量生成-重复生成同月份：返回跳过500条，不产生重复数据")
+    void batchGenerate_duplicate_500Rooms_skip() {
+        // Given
+        ResiReceivableGenerateReq req = new ResiReceivableGenerateReq();
+        req.setProjectId(1L);
+        req.setBillPeriod("2026-07");
+
+        // 模拟已存在500条记录
+        when(receivableMapper.selectCount(any(QueryWrapper.class))).thenReturn(500);
+
+        // When
+        ResiReceivableGenerateVo result = genService.batchGenerate(req);
+
+        // Then
+        assertEquals(500, result.getTotal());
+        assertEquals(0, result.getSuccess());
+        assertEquals(500, result.getSkip());
+        verify(receivableMapper, never()).batchInsert(anyList());
+    }
 }

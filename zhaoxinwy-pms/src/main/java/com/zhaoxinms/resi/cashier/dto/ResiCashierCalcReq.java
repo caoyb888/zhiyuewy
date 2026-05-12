@@ -24,6 +24,15 @@ public class ResiCashierCalcReq implements Serializable {
     /** 折扣ID（可选） */
     private String discountId;
 
+    /** 是否使用预收款冲抵 */
+    private Boolean usePrePay;
+
+    /** 资源类型（冲抵预收款时需要） */
+    private String resourceType;
+
+    /** 资源ID（冲抵预收款时需要） */
+    private Long resourceId;
+
     public Long getProjectId() {
         return projectId;
     }
@@ -46,5 +55,29 @@ public class ResiCashierCalcReq implements Serializable {
 
     public void setDiscountId(String discountId) {
         this.discountId = discountId;
+    }
+
+    public Boolean getUsePrePay() {
+        return usePrePay;
+    }
+
+    public void setUsePrePay(Boolean usePrePay) {
+        this.usePrePay = usePrePay;
+    }
+
+    public String getResourceType() {
+        return resourceType;
+    }
+
+    public void setResourceType(String resourceType) {
+        this.resourceType = resourceType;
+    }
+
+    public Long getResourceId() {
+        return resourceId;
+    }
+
+    public void setResourceId(Long resourceId) {
+        this.resourceId = resourceId;
     }
 }
