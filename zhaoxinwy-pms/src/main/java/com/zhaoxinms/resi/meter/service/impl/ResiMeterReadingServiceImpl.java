@@ -78,12 +78,21 @@ public class ResiMeterReadingServiceImpl extends ServiceImpl<ResiMeterReadingMap
 
         List<ResiMeterReading> list = baseMapper.selectList(queryWrapper);
 
-        // 补充仪表编号和房间名称
+        // 补充仪表编号、公摊组等信息
         for (ResiMeterReading item : list) {
             if (item.getMeterId() != null) {
                 ResiMeterDevice device = meterDeviceService.getById(item.getMeterId());
                 if (device != null) {
                     item.setMeterCode(device.getMeterCode());
+                    item.setIsPublic(device.getIsPublic());
+                    item.setPublicGroup(device.getPublicGroup());
+                    item.setMultiplier(device.getMultiplier());
+                }
+            }
+            if (item.getRoomId() != null) {
+                ResiRoom room = roomService.getById(item.getRoomId());
+                if (room != null) {
+                    item.setRoomName(room.getRoomAlias());
                 }
             }
         }
