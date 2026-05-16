@@ -104,6 +104,7 @@
         <template slot-scope="scope">
           <el-button size="mini" type="text" icon="el-icon-view" @click="handleDetail(scope.row)">详情</el-button>
           <el-button size="mini" type="text" icon="el-icon-printer" @click="handlePrintNoticeSingle(scope.row)" v-hasPermi="['resi:receivable:list']">打印通知单</el-button>
+          <el-button v-if="scope.row.payState !== '2'" size="mini" type="text" icon="el-icon-edit-outline" @click="handleAdjust(scope.row)" v-hasPermi="['resi:receivable:adjust']">调账</el-button>
           <el-button v-if="scope.row.payState === '0'" size="mini" type="text" icon="el-icon-delete" @click="handleDelete(scope.row)" v-hasPermi="['resi:receivable:remove']">删除</el-button>
         </template>
       </el-table-column>
@@ -207,6 +208,45 @@
       </div>
     </el-dialog>
 
+    <!-- 调账弹窗 -->
+    <el-dialog title="应收调账" :visible.sync="adjustOpen" width="550px" append-to-body :close-on-click-modal="false">
+      <el-form ref="adjustForm" :model="adjustParams" :rules="adjustRules" label-width="110px">
+        <el-form-item label="资源名称">
+          <span>{{ adjustRow.resourceName }} — {{ adjustRow.feeName }}</span>
+        </el-form-item>
+        <el-form-item label="当前应收合计">
+          <span style="color: #f56c6c; font-weight: bold">{{ adjustRow.receivable | formatMoney }}</span>
+        </el-form-item>
+        <el-form-item label="调账类型" prop="adjustType">
+          <el-select v-model="adjustParams.adjustType" placeholder="请选择调账类型" style="width: 100%" @change="onAdjustTypeChange">
+            <el-option label="金额调整" value="AMOUNT" />
+            <el-option label="账期调整" value="PERIOD" />
+            <el-option label="状态调整" value="STATUS" />
+            <el-option label="减免滞纳金" value="OVERDUE_WAIVE" />
+          </el-select>
+        </el-form-item>
+        <el-form-item v-if="adjustParams.adjustType === 'AMOUNT'" label="调整后金额" prop="newAmount">
+          <el-input-number v-model="adjustParams.newAmount" :precision="2" :min="0" :controls="false" placeholder="请输入调整后金额" style="width: 100%" />
+        </el-form-item>
+        <el-form-item v-if="adjustParams.adjustType === 'PERIOD'" label="调整后账期" prop="newPeriod">
+          <el-date-picker v-model="adjustParams.newPeriod" type="month" placeholder="选择账期" value-format="yyyy-MM" style="width: 100%" />
+        </el-form-item>
+        <el-form-item v-if="adjustParams.adjustType === 'STATUS'" label="调整后状态" prop="newStatus">
+          <el-select v-model="adjustParams.newStatus" placeholder="请选择状态" style="width: 100%">
+            <el-option label="未收" value="0" />
+            <el-option label="减免" value="3" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="调整原因" prop="reason">
+          <el-input v-model="adjustParams.reason" type="textarea" :rows="2" placeholder="请输入调整原因（可选）" maxlength="500" />
+        </el-form-item>
+      </el-form>
+      <div slot="footer" class="dialog-footer">
+        <el-button type="primary" :loading="adjustLoading" @click="submitAdjust">确 定</el-button>
+        <el-button @click="adjustOpen = false">取 消</el-button>
+      </div>
+    </el-dialog>
+
     <!-- 详情弹窗 -->
     <el-dialog title="应收详情" :visible.sync="detailOpen" width="600px" append-to-body>
       <el-descriptions :column="2" border>
@@ -235,7 +275,7 @@
 </template>
 
 <script>
-import { listReceivable, delReceivable, generateReceivable, createTempReceivable } from "@/api/resi/receivable";
+import { listReceivable, delReceivable, generateReceivable, createTempReceivable, adjustReceivable } from "@/api/resi/receivable";
 import { getNoticePrintData, batchNoticePrintData } from "@/api/resi/cashier";
 import { formatMoney } from "@/utils/resi";
 import { listProject } from "@/api/resi/archive";
@@ -299,6 +339,24 @@ export default {
       },
       tempResourceOptions: [],
       tempFeeOptions: [],
+      // 调账
+      adjustOpen: false,
+      adjustLoading: false,
+      adjustRow: {},
+      adjustParams: {
+        projectId: undefined,
+        adjustType: undefined,
+        newAmount: undefined,
+        newPeriod: undefined,
+        newStatus: undefined,
+        reason: undefined
+      },
+      adjustRules: {
+        adjustType: [{ required: true, message: "请选择调账类型", trigger: "change" }],
+        newAmount: [{ required: true, message: "请输入调整后金额", trigger: "blur" }],
+        newPeriod: [{ required: true, message: "请选择调整后账期", trigger: "change" }],
+        newStatus: [{ required: true, message: "请选择调整后状态", trigger: "change" }]
+      },
       // 详情
       detailOpen: false,
       detailData: {},
@@ -463,6 +521,42 @@ export default {
         this.getList();
         this.$modal.msgSuccess("删除成功");
       }).catch(() => {});
+    },
+    // 调账
+    handleAdjust(row) {
+      this.adjustRow = row;
+      this.adjustParams = {
+        projectId: row.projectId,
+        adjustType: undefined,
+        newAmount: undefined,
+        newPeriod: undefined,
+        newStatus: undefined,
+        reason: undefined
+      };
+      this.adjustOpen = true;
+    },
+    onAdjustTypeChange(type) {
+      this.adjustParams.newAmount = undefined;
+      this.adjustParams.newPeriod = undefined;
+      this.adjustParams.newStatus = undefined;
+      // 如果是减免滞纳金，预填原因
+      if (type === 'OVERDUE_WAIVE') {
+        this.adjustParams.reason = '减免滞纳金';
+      }
+    },
+    submitAdjust() {
+      this.$refs["adjustForm"].validate(valid => {
+        if (valid) {
+          this.adjustLoading = true;
+          adjustReceivable(this.adjustRow.id, this.adjustParams).then(() => {
+            this.$modal.msgSuccess("调账成功");
+            this.adjustOpen = false;
+            this.getList();
+          }).finally(() => {
+            this.adjustLoading = false;
+          });
+        }
+      });
     },
     // 详情
     handleDetail(row) {

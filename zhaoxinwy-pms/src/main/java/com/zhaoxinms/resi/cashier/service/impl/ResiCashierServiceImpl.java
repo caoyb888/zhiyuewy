@@ -35,13 +35,16 @@ import com.zhaoxinms.resi.cashier.dto.ResiCashierCollectVo;
 import com.zhaoxinms.resi.cashier.dto.ResiCashierRefundReq;
 import com.zhaoxinms.resi.cashier.dto.ResiCashierRoomSearchVo;
 import com.zhaoxinms.resi.cashier.dto.ResiCashierRoomSummaryVo;
+import com.zhaoxinms.resi.cashier.dto.ResiCashierWaiveOverdueReq;
 import com.zhaoxinms.resi.cashier.dto.ResiCashierWriteOffReq;
 import com.zhaoxinms.resi.cashier.service.IResiCashierService;
 import com.zhaoxinms.resi.common.ResiConstants;
 import com.zhaoxinms.resi.feeconfig.entity.ResiDiscount;
 import com.zhaoxinms.resi.feeconfig.mapper.ResiDiscountMapper;
+import com.zhaoxinms.resi.finance.entity.ResiAdjustLog;
 import com.zhaoxinms.resi.finance.entity.ResiPayLog;
 import com.zhaoxinms.resi.finance.entity.ResiPreAccount;
+import com.zhaoxinms.resi.finance.mapper.ResiAdjustLogMapper;
 import com.zhaoxinms.resi.finance.mapper.ResiPayLogMapper;
 import com.zhaoxinms.resi.finance.service.IResiDepositService;
 import com.zhaoxinms.resi.finance.service.IResiPrePayService;
@@ -85,6 +88,9 @@ public class ResiCashierServiceImpl implements IResiCashierService {
 
     @Autowired
     private IResiDepositService depositService;
+
+    @Autowired
+    private ResiAdjustLogMapper adjustLogMapper;
 
     // ==================== S4-03 查询接口 ====================
 
@@ -808,6 +814,69 @@ public class ResiCashierServiceImpl implements IResiCashierService {
             log.warn("解析receivableIds失败 json={}", receivableIdsJson);
         }
         return list != null ? list : new ArrayList<>();
+    }
+
+    // ==================== S6-02 减免滞纳金 ====================
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public void waiveOverdue(ResiCashierWaiveOverdueReq req) {
+        Date now = new Date();
+        String userId = String.valueOf(SecurityUtils.getUserId());
+
+        // 1. 查询应收记录
+        ResiReceivable receivable = receivableMapper.selectById(req.getReceivableId());
+        if (receivable == null) {
+            throw new ServiceException("应收记录不存在");
+        }
+        if (receivable.getDeleteTime() != null) {
+            throw new ServiceException("该应收记录已删除");
+        }
+
+        // 2. 校验项目权限
+        if (!receivable.getProjectId().equals(req.getProjectId())) {
+            throw new ServiceException("项目ID不匹配");
+        }
+
+        // 3. 已收款记录不允许减免滞纳金
+        if (ResiConstants.PAY_STATE_PAID.equals(receivable.getPayState())) {
+            throw new ServiceException("已收款的记录不可减免滞纳金");
+        }
+
+        // 4. 校验是否有滞纳金可减免
+        BigDecimal overdueFee = receivable.getOverdueFee() != null ? receivable.getOverdueFee() : BigDecimal.ZERO;
+        if (overdueFee.compareTo(BigDecimal.ZERO) <= 0) {
+            throw new ServiceException("该记录当前滞纳金为0，无需减免");
+        }
+
+        // 5. 记录调整前后的值
+        String beforeValue = "overdueFee=" + overdueFee + ",receivable=" + receivable.getReceivable();
+
+        // 6. 减免滞纳金：overdue_fee 置 0，重算 receivable
+        receivable.setOverdueFee(BigDecimal.ZERO);
+        BigDecimal newReceivable = receivable.getTotal()
+                .subtract(receivable.getDiscountAmount() != null ? receivable.getDiscountAmount() : BigDecimal.ZERO);
+        receivable.setReceivable(newReceivable);
+        receivable.setLastModifyTime(now);
+        receivable.setLastModifyUserId(userId);
+        receivableMapper.updateById(receivable);
+
+        String afterValue = "overdueFee=0.00,receivable=" + receivable.getReceivable();
+
+        // 7. 写入调账记录
+        ResiAdjustLog adjustLog = new ResiAdjustLog();
+        adjustLog.setProjectId(receivable.getProjectId());
+        adjustLog.setReceivableId(req.getReceivableId());
+        adjustLog.setAdjustType(ResiConstants.ADJUST_TYPE_OVERDUE_WAIVE);
+        adjustLog.setBeforeValue(beforeValue);
+        adjustLog.setAfterValue(afterValue);
+        adjustLog.setReason(req.getReason());
+        adjustLog.setCreatorTime(now);
+        adjustLog.setCreatorUserId(userId);
+        adjustLogMapper.insert(adjustLog);
+
+        log.info("减免滞纳金成功 receivableId={} projectId={} waivedAmount={}",
+                req.getReceivableId(), req.getProjectId(), overdueFee);
     }
 
     // ==================== 私有方法 ====================

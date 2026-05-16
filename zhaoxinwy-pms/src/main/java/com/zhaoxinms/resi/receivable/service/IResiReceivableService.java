@@ -4,6 +4,7 @@ import java.util.List;
 
 import com.baomidou.mybatisplus.extension.service.IService;
 import com.zhaoxinms.resi.meter.entity.ResiMeterReading;
+import com.zhaoxinms.resi.receivable.dto.ResiAdjustReq;
 import com.zhaoxinms.resi.receivable.entity.ResiReceivable;
 
 /**
@@ -28,4 +29,12 @@ public interface IResiReceivableService extends IService<ResiReceivable> {
      * @return 生成的应收账单列表
      */
     List<ResiReceivable> createFromMeterReadings(List<ResiMeterReading> readings);
+
+    /**
+     * 调账（金额/账期/状态调整）
+     *
+     * @param id 应收记录ID
+     * @param req 调账请求
+     */
+    void adjust(String id, ResiAdjustReq req);
 }

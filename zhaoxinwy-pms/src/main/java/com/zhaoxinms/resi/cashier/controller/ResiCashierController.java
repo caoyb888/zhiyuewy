@@ -26,6 +26,7 @@ import com.zhaoxinms.resi.cashier.dto.ResiCashierCollectVo;
 import com.zhaoxinms.resi.cashier.dto.ResiCashierRefundReq;
 import com.zhaoxinms.resi.cashier.dto.ResiCashierRoomSearchVo;
 import com.zhaoxinms.resi.cashier.dto.ResiCashierRoomSummaryVo;
+import com.zhaoxinms.resi.cashier.dto.ResiCashierWaiveOverdueReq;
 import com.zhaoxinms.resi.cashier.dto.ResiCashierWriteOffReq;
 import com.zhaoxinms.resi.cashier.service.IResiCashierService;
 import com.zhaoxinms.resi.finance.entity.ResiDeposit;
@@ -140,6 +141,18 @@ public class ResiCashierController extends BaseController {
     public AjaxResult writeOff(@RequestBody @Validated ResiCashierWriteOffReq req) {
         ResiPayLog result = cashierService.writeOff(req);
         return AjaxResult.success(result);
+    }
+
+    /**
+     * 减免滞纳金
+     */
+    @ApiOperation("收银台-减免滞纳金")
+    @PreAuthorize("@ss.hasPermi('resi:cashier:waiveOverdue')")
+    @Log(title = "住宅收费-收银台-减免滞纳金", businessType = BusinessType.UPDATE)
+    @PostMapping("/waive-overdue")
+    public AjaxResult waiveOverdue(@RequestBody @Validated ResiCashierWaiveOverdueReq req) {
+        cashierService.waiveOverdue(req);
+        return AjaxResult.success("减免滞纳金成功");
     }
 
     /**

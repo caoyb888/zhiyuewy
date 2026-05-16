@@ -10,6 +10,7 @@ import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -21,6 +22,7 @@ import com.zhaoxinms.common.core.page.TableDataInfo;
 import com.zhaoxinms.common.enums.BusinessType;
 import com.zhaoxinms.common.utils.StringUtils;
 import com.zhaoxinms.resi.common.annotation.ResiProjectScope;
+import com.zhaoxinms.resi.receivable.dto.ResiAdjustReq;
 import com.zhaoxinms.resi.receivable.dto.ResiReceivableCreateTempReq;
 import com.zhaoxinms.resi.receivable.dto.ResiReceivableGenerateReq;
 import com.zhaoxinms.resi.receivable.dto.ResiReceivableGenerateVo;
@@ -114,6 +116,18 @@ public class ResiReceivableController extends BaseController {
     public AjaxResult createTemp(@RequestBody @Validated ResiReceivableCreateTempReq req) {
         receivableGenService.createTempReceivable(req);
         return AjaxResult.success();
+    }
+
+    /**
+     * 调账（金额/账期/状态调整）
+     */
+    @ApiOperation("应收账单调账")
+    @PreAuthorize("@ss.hasPermi('resi:receivable:adjust')")
+    @Log(title = "住宅收费-应收管理-调账", businessType = BusinessType.UPDATE)
+    @PutMapping("/{id}/adjust")
+    public AjaxResult adjust(@PathVariable("id") String id, @RequestBody @Validated ResiAdjustReq req) {
+        receivableService.adjust(id, req);
+        return AjaxResult.success("调账成功");
     }
 
     /**

@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.zhaoxinms.resi.finance.mapper.ResiAdjustLogMapper">
+
+    <resultMap type="com.zhaoxinms.resi.finance.entity.ResiAdjustLog" id="ResiAdjustLogResult">
+        <id property="id" column="id"/>
+        <result property="projectId" column="project_id"/>
+        <result property="receivableId" column="receivable_id"/>
+        <result property="adjustType" column="adjust_type"/>
+        <result property="beforeValue" column="before_value"/>
+        <result property="afterValue" column="after_value"/>
+        <result property="reason" column="reason"/>
+        <result property="creatorTime" column="creator_time"/>
+        <result property="creatorUserId" column="creator_user_id"/>
+    </resultMap>
+
+    <sql id="selectResiAdjustLogVo">
+        SELECT id, project_id, receivable_id, adjust_type, before_value, after_value, reason, creator_time, creator_user_id
+        FROM resi_adjust_log
+    </sql>
+
+    <select id="selectResiAdjustLogList" parameterType="com.zhaoxinms.resi.finance.dto.ResiAdjustLogQuery" resultMap="ResiAdjustLogResult">
+        <include refid="selectResiAdjustLogVo"/>
+        <where>
+            <if test="projectId != null">
+                AND project_id = #{projectId}
+            </if>
+            <if test="receivableId != null and receivableId != ''">
+                AND receivable_id = #{receivableId}
+            </if>
+            <if test="adjustType != null and adjustType != ''">
+                AND adjust_type = #{adjustType}
+            </if>
+        </where>
+        ORDER BY creator_time DESC
+    </select>
+
+</mapper>
