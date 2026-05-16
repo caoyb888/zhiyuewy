@@ -279,3 +279,28 @@ export function listParkingSpace(query) {
     params: query
   })
 }
+
+// ==================== 房屋过户 ====================
+
+export function transferRoom(data) {
+  return request({
+    url: '/resi/archive/room/transfer',
+    method: 'post',
+    data
+  })
+}
+
+export function queryTransferList(params) {
+  return request({
+    url: '/resi/archive/room/transfer/query',
+    method: 'get',
+    params
+  })
+}
+
+export function getTransferHistory(roomId) {
+  return request({
+    url: '/resi/archive/room/transfer/history/' + roomId,
+    method: 'get'
+  })
+}

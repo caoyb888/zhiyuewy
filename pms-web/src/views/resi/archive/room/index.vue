@@ -38,6 +38,9 @@
       <el-col :span="1.5">
         <el-button type="danger" plain icon="el-icon-delete" size="mini" :disabled="multiple" @click="handleDelete" v-hasPermi="['resi:room:remove']">删除</el-button>
       </el-col>
+      <el-col :span="1.5">
+        <el-button type="warning" plain icon="el-icon-s-custom" size="mini" :disabled="single" @click="handleTransfer" v-hasPermi="['resi:room:transfer']">过户</el-button>
+      </el-col>
       <right-toolbar :showSearch.sync="showSearch" @queryTable="getList"></right-toolbar>
     </el-row>
 
@@ -63,15 +66,57 @@
           <span>{{ parseTime(scope.row.createTime) }}</span>
         </template>
       </el-table-column>
-      <el-table-column label="操作" align="center" class-name="small-padding fixed-width" width="150">
+      <el-table-column label="操作" align="center" class-name="small-padding fixed-width" width="220">
         <template slot-scope="scope">
           <el-button size="mini" type="text" icon="el-icon-edit" @click="handleUpdate(scope.row)" v-hasPermi="['resi:room:edit']">修改</el-button>
+          <el-button size="mini" type="text" icon="el-icon-s-custom" @click="handleTransfer(scope.row)" v-hasPermi="['resi:room:transfer']">过户</el-button>
           <el-button size="mini" type="text" icon="el-icon-delete" @click="handleDelete(scope.row)" v-hasPermi="['resi:room:remove']">删除</el-button>
         </template>
       </el-table-column>
     </el-table>
 
     <pagination v-show="total>0" :total="total" :page.sync="queryParams.pageNum" :limit.sync="queryParams.pageSize" @pagination="getList" />
+
+    <!-- 过户弹窗 -->
+    <el-dialog :title="transferTitle" :visible.sync="transferOpen" width="600px" append-to-body>
+      <el-form ref="transferForm" :model="transferForm" :rules="transferRules" label-width="100px">
+        <el-form-item label="房间">
+          <el-input v-model="transferForm.roomName" disabled />
+        </el-form-item>
+        <el-form-item label="当前业主">
+          <el-input v-model="transferForm.oldCustomerName" disabled />
+        </el-form-item>
+        <el-form-item label="新业主" prop="newCustomerId">
+          <el-select v-model="transferForm.newCustomerId" placeholder="请选择新业主" filterable style="width: 100%">
+            <el-option v-for="item in customerOptions" :key="item.id" :label="item.customerName + ' (' + item.phone + ')'" :value="item.id" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="过户日期" prop="transferDate">
+          <el-date-picker v-model="transferForm.transferDate" type="date" placeholder="选择日期" value-format="yyyy-MM-dd" style="width: 100%" />
+        </el-form-item>
+        <el-form-item label="过户备注" prop="transferRemark">
+          <el-input v-model="transferForm.transferRemark" type="textarea" :rows="2" placeholder="请输入备注" maxlength="500" />
+        </el-form-item>
+      </el-form>
+      <div slot="footer" class="dialog-footer">
+        <el-button type="primary" @click="submitTransfer">确 定</el-button>
+        <el-button @click="cancelTransfer">取 消</el-button>
+      </div>
+    </el-dialog>
+
+    <!-- 过户历史弹窗 -->
+    <el-dialog title="过户历史" :visible.sync="historyOpen" width="800px" append-to-body>
+      <el-table :data="transferHistoryList" v-loading="historyLoading">
+        <el-table-column label="过户日期" align="center" prop="transferDate" width="120" />
+        <el-table-column label="原业主" align="center" prop="oldCustomerName" width="120" />
+        <el-table-column label="新业主" align="center" prop="newCustomerName" width="120" />
+        <el-table-column label="备注" align="center" prop="transferRemark" />
+        <el-table-column label="操作员" align="center" prop="operator" width="100" />
+      </el-table>
+      <div slot="footer" class="dialog-footer">
+        <el-button @click="historyOpen = false">关 闭</el-button>
+      </div>
+    </el-dialog>
 
     <el-dialog :title="title" :visible.sync="open" width="600px" append-to-body>
       <el-form ref="form" :model="form" :rules="rules" label-width="100px">
@@ -132,7 +177,7 @@
 </template>
 
 <script>
-import { listRoom, getRoom, addRoom, updateRoom, delRoom, listProject, listBuilding } from "@/api/resi/archive";
+import { listRoom, getRoom, addRoom, updateRoom, delRoom, listProject, listBuilding, transferRoom, getTransferHistory, listCustomer } from "@/api/resi/archive";
 
 export default {
   name: "ResiRoom",
@@ -148,8 +193,14 @@ export default {
       projectOptions: [],
       buildingOptions: [],
       formBuildingOptions: [],
+      customerOptions: [],
       title: "",
       open: false,
+      transferTitle: "",
+      transferOpen: false,
+      historyOpen: false,
+      historyLoading: false,
+      transferHistoryList: [],
       queryParams: {
         pageNum: 1,
         pageSize: 10,
@@ -159,11 +210,23 @@ export default {
         state: undefined
       },
       form: {},
+      transferForm: {
+        roomId: undefined,
+        roomName: undefined,
+        oldCustomerName: undefined,
+        newCustomerId: undefined,
+        transferDate: undefined,
+        transferRemark: undefined
+      },
       rules: {
         projectId: [{ required: true, message: "所属项目不能为空", trigger: "change" }],
         buildingId: [{ required: true, message: "所属楼栋不能为空", trigger: "change" }],
         roomNo: [{ required: true, message: "房号不能为空", trigger: "blur" }],
         state: [{ required: true, message: "状态不能为空", trigger: "change" }]
+      },
+      transferRules: {
+        newCustomerId: [{ required: true, message: "新业主不能为空", trigger: "change" }],
+        transferDate: [{ required: true, message: "过户日期不能为空", trigger: "change" }]
       }
     };
   },
@@ -291,6 +354,87 @@ export default {
         this.getList();
         this.$modal.msgSuccess("删除成功");
       }).catch(() => {});
+    },
+    handleTransfer(row) {
+      const roomId = row.id || this.ids[0];
+      const room = row.id ? row : this.roomList.find(item => item.id === roomId);
+      if (!room) {
+        this.$modal.msgError("请选择要过户的房间");
+        return;
+      }
+      this.transferForm = {
+        roomId: room.id,
+        roomName: room.roomAlias || room.roomNo,
+        oldCustomerName: "",
+        newCustomerId: undefined,
+        transferDate: this.parseTime(new Date(), '{y}-{m}-{d}'),
+        transferRemark: ""
+      };
+      this.transferTitle = '房间过户 - ' + (room.roomAlias || room.roomNo);
+      this.transferOpen = true;
+      this.getCustomerOptions(room.projectId);
+      this.getCurrentCustomer(room.id);
+    },
+    getCustomerOptions(projectId) {
+      listCustomer({ pageNum: 1, pageSize: 1000, projectId: projectId }).then(response => {
+        this.customerOptions = response.rows || [];
+      });
+    },
+    getCurrentCustomer(roomId) {
+      getTransferHistory(roomId).then(response => {
+        const list = response.data || [];
+        if (list.length > 0) {
+          const latest = list[0];
+          this.transferForm.oldCustomerName = latest.newCustomerName || "未知";
+        } else {
+          this.transferForm.oldCustomerName = "无";
+        }
+      }).catch(() => {
+        this.transferForm.oldCustomerName = "无";
+      });
+    },
+    cancelTransfer() {
+      this.transferOpen = false;
+      this.resetTransferForm();
+    },
+    resetTransferForm() {
+      this.transferForm = {
+        roomId: undefined,
+        roomName: undefined,
+        oldCustomerName: undefined,
+        newCustomerId: undefined,
+        transferDate: undefined,
+        transferRemark: undefined
+      };
+      this.resetForm("transferForm");
+    },
+    submitTransfer() {
+      this.$refs["transferForm"].validate(valid => {
+        if (valid) {
+          const data = {
+            roomId: this.transferForm.roomId,
+            newCustomerId: this.transferForm.newCustomerId,
+            transferDate: this.transferForm.transferDate,
+            transferRemark: this.transferForm.transferRemark
+          };
+          transferRoom(data).then(() => {
+            this.$modal.msgSuccess("过户成功");
+            this.transferOpen = false;
+            this.resetTransferForm();
+            this.getList();
+          });
+        }
+      });
+    },
+    handleViewHistory(row) {
+      this.historyLoading = true;
+      this.historyOpen = true;
+      getTransferHistory(row.id).then(response => {
+        this.transferHistoryList = response.data || [];
+        this.historyLoading = false;
+      }).catch(() => {
+        this.historyLoading = false;
+      });
     }
   }
 };
