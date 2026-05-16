@@ -1,0 +1,126 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.zhaoxinms.resi.receivable.mapper.ResiReceivableMapper">
+
+    <resultMap type="com.zhaoxinms.resi.receivable.entity.ResiReceivable" id="ResiReceivableResult">
+        <id property="id" column="id"/>
+        <result property="projectId" column="project_id"/>
+        <result property="resourceType" column="resource_type"/>
+        <result property="resourceId" column="resource_id"/>
+        <result property="resourceName" column="resource_name"/>
+        <result property="customerId" column="customer_id"/>
+        <result property="customerName" column="customer_name"/>
+        <result property="feeId" column="fee_id"/>
+        <result property="feeName" column="fee_name"/>
+        <result property="feeType" column="fee_type"/>
+        <result property="billPeriod" column="bill_period"/>
+        <result property="beginDate" column="begin_date"/>
+        <result property="endDate" column="end_date"/>
+        <result property="num" column="num"/>
+        <result property="price" column="price"/>
+        <result property="total" column="total"/>
+        <result property="overdueFee" column="overdue_fee"/>
+        <result property="discountId" column="discount_id"/>
+        <result property="discountAmount" column="discount_amount"/>
+        <result property="receivable" column="receivable"/>
+        <result property="payState" column="pay_state"/>
+        <result property="paidAmount" column="paid_amount"/>
+        <result property="payLogId" column="pay_log_id"/>
+        <result property="payTime" column="pay_time"/>
+        <result property="genBatch" column="gen_batch"/>
+        <result property="meterReadingId" column="meter_reading_id"/>
+        <result property="remark" column="remark"/>
+        <result property="enabledMark" column="enabled_mark"/>
+        <result property="creatorTime" column="creator_time"/>
+        <result property="creatorUserId" column="creator_user_id"/>
+        <result property="lastModifyTime" column="last_modify_time"/>
+        <result property="lastModifyUserId" column="last_modify_user_id"/>
+        <result property="deleteTime" column="delete_time"/>
+        <result property="deleteUserId" column="delete_user_id"/>
+    </resultMap>
+
+    <sql id="selectResiReceivableVo">
+        SELECT id, project_id, resource_type, resource_id, resource_name,
+               customer_id, customer_name, fee_id, fee_name, fee_type,
+               bill_period, begin_date, end_date, num, price, total,
+               overdue_fee, discount_id, discount_amount, receivable,
+               pay_state, paid_amount, pay_log_id, pay_time, gen_batch,
+               meter_reading_id, remark, enabled_mark,
+               creator_time, creator_user_id, last_modify_time, last_modify_user_id,
+               delete_time, delete_user_id
+        FROM resi_receivable
+    </sql>
+
+    <select id="selectResiReceivableList" parameterType="com.zhaoxinms.resi.receivable.dto.ResiReceivableQuery"
+            resultMap="ResiReceivableResult">
+        <include refid="selectResiReceivableVo"/>
+        <where>
+            delete_time IS NULL
+            <if test="projectId != null">
+                AND project_id = #{projectId}
+            </if>
+            <if test="billPeriod != null and billPeriod != ''">
+                AND bill_period = #{billPeriod}
+            </if>
+            <if test="feeId != null and feeId != ''">
+                AND fee_id = #{feeId}
+            </if>
+            <if test="payState != null and payState != ''">
+                AND pay_state = #{payState}
+            </if>
+            <if test="resourceType != null and resourceType != ''">
+                AND resource_type = #{resourceType}
+            </if>
+            <if test="resourceId != null">
+                AND resource_id = #{resourceId}
+            </if>
+            <if test="resourceName != null and resourceName != ''">
+                AND resource_name LIKE CONCAT('%', #{resourceName}, '%')
+            </if>
+            <if test="customerName != null and customerName != ''">
+                AND customer_name LIKE CONCAT('%', #{customerName}, '%')
+            </if>
+            <if test="feeType != null and feeType != ''">
+                AND fee_type = #{feeType}
+            </if>
+            <if test="genBatch != null and genBatch != ''">
+                AND gen_batch = #{genBatch}
+            </if>
+            <!-- 项目权限隔离：AOP 注入 projectIds -->
+            <if test="projectIds != null and projectIds.size() > 0">
+                AND project_id IN
+                <foreach collection="projectIds" item="pid" open="(" separator="," close=")">
+                    #{pid}
+                </foreach>
+            </if>
+        </where>
+        ORDER BY creator_time DESC
+    </select>
+
+    <!-- 批量插入应收记录 -->
+    <insert id="batchInsert">
+        INSERT INTO resi_receivable (
+            id, project_id, resource_type, resource_id, resource_name,
+            customer_id, customer_name, fee_id, fee_name, fee_type,
+            bill_period, begin_date, end_date, num, price, total,
+            overdue_fee, discount_id, discount_amount, receivable,
+            pay_state, paid_amount, pay_log_id, pay_time, gen_batch,
+            meter_reading_id, remark, enabled_mark,
+            creator_time, creator_user_id, last_modify_time, last_modify_user_id
+        ) VALUES
+        <foreach collection="list" item="item" separator=",">
+            (
+                #{item.id}, #{item.projectId}, #{item.resourceType}, #{item.resourceId}, #{item.resourceName},
+                #{item.customerId}, #{item.customerName}, #{item.feeId}, #{item.feeName}, #{item.feeType},
+                #{item.billPeriod}, #{item.beginDate}, #{item.endDate}, #{item.num}, #{item.price}, #{item.total},
+                #{item.overdueFee}, #{item.discountId}, #{item.discountAmount}, #{item.receivable},
+                #{item.payState}, #{item.paidAmount}, #{item.payLogId}, #{item.payTime}, #{item.genBatch},
+                #{item.meterReadingId}, #{item.remark}, #{item.enabledMark},
+                #{item.creatorTime}, #{item.creatorUserId}, #{item.lastModifyTime}, #{item.lastModifyUserId}
+            )
+        </foreach>
+    </insert>
+
+</mapper>

@@ -91,6 +91,12 @@ public class ResiMeterReading extends ResiFlowBaseEntity {
     // 非数据库字段：倍率（用于计算）
     private transient BigDecimal multiplier;
 
+    // 非数据库字段：是否公摊总表（用于公摊计算）
+    private transient Integer isPublic;
+
+    // 非数据库字段：公摊组编号（用于公摊计算）
+    private transient String publicGroup;
+
     public Long getProjectId() {
         return projectId;
     }
@@ -257,5 +263,21 @@ public class ResiMeterReading extends ResiFlowBaseEntity {
 
     public void setMultiplier(BigDecimal multiplier) {
         this.multiplier = multiplier;
+    }
+
+    public Integer getIsPublic() {
+        return isPublic;
+    }
+
+    public void setIsPublic(Integer isPublic) {
+        this.isPublic = isPublic;
+    }
+
+    public String getPublicGroup() {
+        return publicGroup;
+    }
+
+    public void setPublicGroup(String publicGroup) {
+        this.publicGroup = publicGroup;
     }
 }

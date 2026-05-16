@@ -76,6 +76,14 @@ export function calcShare(data) {
   })
 }
 
+export function sharePreview(params) {
+  return request({
+    url: '/resi/meter/reading/share-preview',
+    method: 'get',
+    params
+  })
+}
+
 // ==================== 入账 ====================
 
 export function billMeterReading(id) {

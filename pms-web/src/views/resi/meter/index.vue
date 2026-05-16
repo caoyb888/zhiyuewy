@@ -64,14 +64,46 @@
           v-hasPermi="['resi:meter:remove']"
         >删除</el-button>
       </el-col>
+      <el-col :span="1.5">
+        <el-button
+          type="warning"
+          plain
+          icon="el-icon-s-order"
+          size="mini"
+          :disabled="single"
+          @click="handleBill"
+          v-hasPermi="['resi:meter:bill']"
+        >单户入账</el-button>
+      </el-col>
+      <el-col :span="1.5">
+        <el-button
+          type="warning"
+          plain
+          icon="el-icon-s-claim"
+          size="mini"
+          :disabled="multiple"
+          @click="handleBatchBill"
+          v-hasPermi="['resi:meter:bill']"
+        >批量入账</el-button>
+      </el-col>
       <right-toolbar :showSearch.sync="showSearch" @queryTable="getList"></right-toolbar>
     </el-row>
 
     <!-- 数据表格 -->
-    <el-table v-loading="loading" :data="readingList" @selection-change="handleSelectionChange">
+    <el-table v-loading="loading" :data="readingList" @selection-change="handleSelectionChange" :row-class-name="tableRowClassName">
       <el-table-column type="selection" width="55" align="center" />
       <el-table-column label="序号" type="index" width="50" align="center" />
-      <el-table-column label="仪表编号" align="center" prop="meterCode" width="120" />
+      <el-table-column label="" align="center" width="40">
+        <template slot-scope="scope">
+          <i v-if="isWarningRow(scope.row)" class="el-icon-warning" style="color: #e6a23c; font-size: 16px;" title="读数回退预警" />
+        </template>
+      </el-table-column>
+      <el-table-column label="仪表编号" align="center" prop="meterCode" width="120">
+        <template slot-scope="scope">
+          <span>{{ scope.row.meterCode }}</span>
+          <el-tag v-if="scope.row.isPublic === 1" type="danger" size="mini" style="margin-left: 4px">总</el-tag>
+        </template>
+      </el-table-column>
       <el-table-column label="抄表期间" align="center" prop="period" width="100" />
       <el-table-column label="上次读数" align="right" prop="lastReading" width="100">
         <template slot-scope="scope">
@@ -116,7 +148,7 @@
           <span>{{ parseTime(scope.row.creatorTime) }}</span>
         </template>
       </el-table-column>
-      <el-table-column label="操作" align="center" class-name="small-padding fixed-width" width="150">
+      <el-table-column label="操作" align="center" class-name="small-padding fixed-width" width="180">
         <template slot-scope="scope">
           <el-button
             size="mini"
@@ -134,6 +166,23 @@
             v-hasPermi="['resi:meter:remove']"
             :disabled="scope.row.status !== 'INPUT'"
           >删除</el-button>
+          <el-button
+            size="mini"
+            type="text"
+            icon="el-icon-s-order"
+            @click="handleBillRow(scope.row)"
+            v-hasPermi="['resi:meter:bill']"
+            :disabled="scope.row.status !== 'INPUT'"
+            style="color: #e6a23c"
+          >入账</el-button>
+          <el-button
+            size="mini"
+            type="text"
+            icon="el-icon-info"
+            @click="handleShareDetail(scope.row)"
+            v-hasPermi="['resi:meter:share']"
+            :disabled="!scope.row.publicGroup"
+          >公摊</el-button>
         </template>
       </el-table-column>
     </el-table>
@@ -245,11 +294,91 @@
         <el-button @click="cancel">取 消</el-button>
       </div>
     </el-dialog>
+
+    <!-- 公摊详情抽屉 -->
+    <el-drawer
+      :title="'公摊详情 - ' + shareDetailTitle"
+      :visible.sync="shareDrawerVisible"
+      direction="rtl"
+      size="700px"
+      :close-on-click-modal="false"
+    >
+      <div v-loading="shareLoading" style="padding: 0 20px 20px;">
+        <!-- 公摊组汇总卡片 -->
+        <el-card v-if="shareResult" shadow="never" style="margin-bottom: 15px;">
+          <div slot="header">
+            <span>公摊组：{{ shareResult.publicGroup }}</span>
+          </div>
+          <el-row :gutter="20">
+            <el-col :span="8">
+              <div class="share-stat-item">
+                <div class="share-stat-label">总表用量</div>
+                <div class="share-stat-value">{{ shareResult.totalUsage }}</div>
+              </div>
+            </el-col>
+            <el-col :span="8">
+              <div class="share-stat-item">
+                <div class="share-stat-label">分户合计</div>
+                <div class="share-stat-value">{{ shareResult.subTotalUsage }}</div>
+              </div>
+            </el-col>
+            <el-col :span="8">
+              <div class="share-stat-item">
+                <div class="share-stat-label">公摊总量</div>
+                <div class="share-stat-value" style="color: #e6a23c">{{ shareResult.shareTotal }}</div>
+              </div>
+            </el-col>
+          </el-row>
+          <el-row :gutter="20" style="margin-top: 10px;">
+            <el-col :span="8">
+              <div class="share-stat-item">
+                <div class="share-stat-label">组内总面积</div>
+                <div class="share-stat-value">{{ shareResult.totalArea }} ㎡</div>
+              </div>
+            </el-col>
+            <el-col :span="8">
+              <div class="share-stat-item">
+                <div class="share-stat-label">分户数量</div>
+                <div class="share-stat-value">{{ shareResult.roomCount }} 户</div>
+              </div>
+            </el-col>
+          </el-row>
+        </el-card>
+
+        <!-- 公摊明细表格 -->
+        <el-table v-if="shareResult && shareResult.details" :data="shareResult.details" size="small" border>
+          <el-table-column label="房间名称" align="center" prop="roomName" min-width="120" />
+          <el-table-column label="建筑面积" align="right" prop="buildingArea" width="100">
+            <template slot-scope="scope">
+              {{ scope.row.buildingArea }} ㎡
+            </template>
+          </el-table-column>
+          <el-table-column label="面积占比" align="right" prop="areaRatio" width="100">
+            <template slot-scope="scope">
+              {{ (scope.row.areaRatio * 100).toFixed(2) }}%
+            </template>
+          </el-table-column>
+          <el-table-column label="原始用量" align="right" prop="rawUsage" width="100" />
+          <el-table-column label="公摊分摊量" align="right" prop="shareAmount" width="110">
+            <template slot-scope="scope">
+              <span style="color: #e6a23c; font-weight: bold">{{ scope.row.shareAmount }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="计费用量" align="right" prop="billedUsage" width="100">
+            <template slot-scope="scope">
+              <span style="font-weight: bold">{{ scope.row.billedUsage }}</span>
+            </template>
+          </el-table-column>
+        </el-table>
+
+        <el-empty v-if="!shareResult || !shareResult.details || shareResult.details.length === 0" description="暂无公摊明细数据" />
+      </div>
+    </el-drawer>
   </div>
 </template>
 
 <script>
-import { listMeterReading, getMeterReading, addMeterReading, updateMeterReading, delMeterReading } from "@/api/resi/meter";
+import { listMeterReading, getMeterReading, addMeterReading, updateMeterReading, delMeterReading, billMeterReading, batchBillMeterReading, sharePreview } from "@/api/resi/meter";
 import { listProject } from "@/api/resi/archive";
 import { listMeterDevice } from "@/api/resi/archive";
 
@@ -281,6 +410,10 @@ export default {
         lossAmount: "—",
         billedUsage: "—"
       },
+      shareDrawerVisible: false,
+      shareLoading: false,
+      shareDetailTitle: "",
+      shareResult: null,
       rules: {
         projectId: [
           { required: true, message: "所属项目不能为空", trigger: "change" }
@@ -332,6 +465,52 @@ export default {
     statusLabel(status) {
       const map = { INPUT: "已录入", BILLED: "已入账", VERIFIED: "已复核" };
       return map[status] || status;
+    },
+
+    /** 判断是否为预警行 */
+    isWarningRow(row) {
+      if (row.currReading != null && row.lastReading != null) {
+        const curr = parseFloat(row.currReading);
+        const last = parseFloat(row.lastReading);
+        if (curr < last) return true;
+      }
+      if (row.rawUsage != null && parseFloat(row.rawUsage) < 0) return true;
+      return false;
+    },
+
+    /** 表格行样式 */
+    tableRowClassName({ row }) {
+      if (this.isWarningRow(row)) {
+        return 'warning-row';
+      }
+      return '';
+    },
+
+    /** 打开公摊详情抽屉 */
+    handleShareDetail(row) {
+      if (!row.publicGroup) {
+        this.$modal.msgWarning("该仪表未配置公摊组");
+        return;
+      }
+      this.shareDetailTitle = row.meterCode + ' (' + row.period + ')';
+      this.shareDrawerVisible = true;
+      this.shareLoading = true;
+      this.shareResult = null;
+      sharePreview({
+        projectId: row.projectId,
+        period: row.period,
+        publicGroup: row.publicGroup
+      }).then(response => {
+        this.shareLoading = false;
+        const list = response.data;
+        if (list && list.length > 0) {
+          this.shareResult = list[0];
+        } else {
+          this.shareResult = { publicGroup: row.publicGroup, details: [] };
+        }
+      }).catch(() => {
+        this.shareLoading = false;
+      });
     },
 
     /** 项目变更时加载仪表列表 */
@@ -480,7 +659,88 @@ export default {
         this.getList();
         this.$modal.msgSuccess("删除成功");
       }).catch(() => {});
+    },
+
+    /** 单户入账（工具栏） */
+    handleBill() {
+      const id = this.ids[0];
+      const row = this.readingList.find(item => item.id === id);
+      this.handleBillRow(row);
+    },
+
+    /** 单户入账（行内） */
+    handleBillRow(row) {
+      if (row.status !== 'INPUT') {
+        this.$modal.msgWarning("仅状态为【已录入】的记录可入账");
+        return;
+      }
+      this.$modal.confirm('确认对【' + row.meterCode + '】' + row.period + '的抄表记录进行入账？').then(() => {
+        return billMeterReading(row.id);
+      }).then(response => {
+        if (response.data && response.data.success) {
+          this.$modal.msgSuccess("入账成功");
+          this.getList();
+        } else {
+          this.$modal.msgError(response.data ? response.data.message : "入账失败");
+        }
+      }).catch(() => {});
+    },
+
+    /** 批量入账 */
+    handleBatchBill() {
+      if (!this.queryParams.projectId) {
+        this.$modal.msgWarning("请先选择项目");
+        return;
+      }
+      if (!this.queryParams.period) {
+        this.$modal.msgWarning("请先选择抄表期间");
+        return;
+      }
+      const selectedIds = this.ids;
+      const hint = selectedIds.length > 0
+        ? '确认对选中的 ' + selectedIds.length + ' 条记录进行批量入账？'
+        : '确认对当前筛选条件下所有【已录入】的抄表记录进行批量入账？';
+      this.$modal.confirm(hint).then(() => {
+        this.loading = true;
+        return batchBillMeterReading({
+          projectId: this.queryParams.projectId,
+          period: this.queryParams.period,
+          ids: selectedIds.length > 0 ? selectedIds : undefined
+        });
+      }).then(response => {
+        this.loading = false;
+        const data = response.data;
+        this.$modal.msgSuccess('批量入账完成：成功 ' + data.success + ' 条，跳过 ' + data.skip + ' 条，失败 ' + data.fail + ' 条');
+        this.getList();
+      }).catch(() => {
+        this.loading = false;
+      });
     }
   }
 };
 </script>
+
+<style>
+.el-table .warning-row {
+  background: #fdf6ec !important;
+}
+.el-table .warning-row:hover > td {
+  background: #fbf0d8 !important;
+}
+.share-stat-item {
+  text-align: center;
+  padding: 10px 0;
+  border-radius: 4px;
+  background: #f5f7fa;
+}
+.share-stat-label {
+  font-size: 12px;
+  color: #909399;
+  margin-bottom: 6px;
+}
+.share-stat-value {
+  font-size: 16px;
+  font-weight: bold;
+  color: #303133;
+}
+</style>

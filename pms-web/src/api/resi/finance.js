@@ -4,7 +4,7 @@ import request from '@/utils/request'
 
 export function listPayLog(query) {
   return request({
-    url: '/resi/finance/pay-log',
+    url: '/resi/finance/pay-log/list',
     method: 'get',
     params: query
   })
@@ -17,11 +17,18 @@ export function getPayLog(id) {
   })
 }
 
+export function verifyPayLog(id) {
+  return request({
+    url: '/resi/finance/pay-log/' + id + '/verify',
+    method: 'post'
+  })
+}
+
 // ==================== 预收款 ====================
 
 export function listPreAccount(query) {
   return request({
-    url: '/resi/finance/pre-account',
+    url: '/resi/finance/pre-pay/accounts',
     method: 'get',
     params: query
   })
@@ -29,9 +36,25 @@ export function listPreAccount(query) {
 
 export function listPrePay(query) {
   return request({
-    url: '/resi/finance/pre-pay',
+    url: '/resi/finance/pre-pay/list',
     method: 'get',
     params: query
+  })
+}
+
+export function addPrePay(data) {
+  return request({
+    url: '/resi/finance/pre-pay/add',
+    method: 'post',
+    data
+  })
+}
+
+export function batchOffsetPrePay(data) {
+  return request({
+    url: '/resi/finance/pre-pay/batch-offset',
+    method: 'post',
+    data
   })
 }
 

@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3.dtd">
+<mapper namespace="com.zhaoxinms.resi.finance.mapper.ResiPreAccountMapper">
+
+    <!-- 按条件查询并锁定账户（SELECT FOR UPDATE） -->
+    <select id="selectListForUpdate" resultType="com.zhaoxinms.resi.finance.entity.ResiPreAccount">
+        SELECT * FROM resi_pre_account
+        WHERE project_id = #{projectId}
+          AND resource_type = #{resourceType}
+          AND resource_id = #{resourceId}
+          AND balance > 0
+        ORDER BY fee_id ASC
+        FOR UPDATE
+    </select>
+
+    <!-- 按ID列表查询并锁定 -->
+    <select id="selectBatchIdsForUpdate" resultType="com.zhaoxinms.resi.finance.entity.ResiPreAccount">
+        SELECT * FROM resi_pre_account
+        WHERE id IN
+        <foreach collection="list" item="id" open="(" separator="," close=")">
+            #{id}
+        </foreach>
+        FOR UPDATE
+    </select>
+
+</mapper>
